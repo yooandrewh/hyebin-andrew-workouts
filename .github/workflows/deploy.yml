@@ -1,0 +1,38 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Stamp the build version (date + short commit SHA) so the app footer
+      # always shows which build is live. Runs on every push automatically.
+      - name: Stamp version
+        run: |
+          echo "window.APP_VERSION = \"$(date -u +%Y.%m.%d) · ${GITHUB_SHA::7}\";" > version.js
+          echo "Stamped: $(cat version.js)"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4
