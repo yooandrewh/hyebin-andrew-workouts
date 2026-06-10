@@ -239,12 +239,12 @@ function load(){
     const raw = localStorage.getItem(STORE_KEY);
     if(raw) return JSON.parse(raw);
   }catch(e){}
-  const p1 = uid(), p2 = uid();
+  // stable ids so every device shares the SAME two profiles (no duplicates when syncing)
   return {
     units:"lb",
     theme:"light",
-    profiles:[{id:p1,name:"Hyebin",color:PROFILE_COLORS[1]},{id:p2,name:"Andrew",color:PROFILE_COLORS[0]}],
-    currentProfileId:p1,
+    profiles:[{id:"hyebin",name:"Hyebin",color:PROFILE_COLORS[1]},{id:"andrew",name:"Andrew",color:PROFILE_COLORS[0]}],
+    currentProfileId:"hyebin",
     exercises:[],     // library: {id,name,equipment,angle}
     workouts:[],      // templates: {id,name,exerciseIds:[]}
     sessions:[],      // completed: {id,workoutId,workoutName,profileId,startedAt,endedAt,durationSec,entries:[...]}
