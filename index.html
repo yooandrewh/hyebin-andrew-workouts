@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="apple-mobile-web-app-title" content="H+A Workouts" />
 <meta name="theme-color" content="#0e0f13" />
 <link rel="manifest" href="manifest.json" />
@@ -987,8 +987,12 @@ function howTo(exId){
   const ex=exById(exId); if(!ex) return;
   const terms=[ (ex.angle&&ex.angle!=="None")?ex.angle:"", ex.name, ex.equipment, "proper form" ].filter(Boolean);
   const q=encodeURIComponent("how to "+terms.join(" "));
-  // Opens a YouTube search — launches the YouTube app on iPhone if it's installed, else Safari
-  window.open("https://www.youtube.com/results?search_query="+q, "_blank");
+  const url="https://www.youtube.com/results?search_query="+q;
+  // Open via a real anchor click so an iOS Home-Screen app hands off to Safari / the
+  // YouTube app instead of navigating its own window (which left a blank/stuck page).
+  const a=document.createElement("a");
+  a.href=url; a.target="_blank"; a.rel="noopener noreferrer";
+  document.body.appendChild(a); a.click(); a.remove();
 }
 /* ----- per-exercise GOAL (target sets/reps/RPE + notes); shows everywhere the exercise is used ----- */
 function goalText(g){
@@ -1088,8 +1092,17 @@ function tickSession(){
 }
 
 let rest={running:false,endAt:0,timer:null};
+// iOS only allows audio that's unlocked by a user gesture. The rest beep fires from a
+// timer, so prime/resume the AudioContext here (startRest runs from the ✓ tap).
+function unlockAudio(){
+  try{
+    beepCtx = beepCtx || new (window.AudioContext||window.webkitAudioContext)();
+    if(beepCtx.state==="suspended") beepCtx.resume();
+  }catch(e){}
+}
 function startRest(sec){
   stopRest();
+  unlockAudio();
   rest.running=true; rest.endAt=Date.now()+sec*1000;
   rest.timer=setInterval(tickRest,250);
   renderRest(); tickRest(); pushPresence();
@@ -1117,6 +1130,7 @@ function ding(){
   try{
     if(navigator.vibrate) navigator.vibrate([180,90,180]);
     beepCtx = beepCtx || new (window.AudioContext||window.webkitAudioContext)();
+    if(beepCtx.state==="suspended") beepCtx.resume();
     [0,0.18,0.36].forEach((d,i)=>{
       const o=beepCtx.createOscillator(), g=beepCtx.createGain();
       o.frequency.value= i===2?1040:780; o.type="sine";
