@@ -563,8 +563,13 @@ let lastPlan=null, applyingPlan=false;
 function planFresh(p){ return !!(p && p.active && (Date.now()-(p.updatedAt||0) < PRESENCE_TTL)); }
 function pushPlan(){
   if(applyingPlan || !(S.active && S.active.joint) || !window.cloudPushPlan) return;
+  const ids=S.active.entries.map(e=>e.exerciseId).filter(safeId);
+  // carry the exercise DEFINITIONS with the plan so the partner can add them even if the
+  // shared library hasn't synced yet (or got clobbered by a concurrent full-document write)
+  const defs=ids.map(id=>exById(id)).filter(Boolean)
+    .map(e=>({id:e.id,name:e.name,equipment:e.equipment,angle:e.angle}));
   try{ window.cloudPushPlan({ _plan:true, active:true, startedAt:S.active.startedAt, updatedAt:Date.now(),
-    exerciseIds:S.active.entries.map(e=>e.exerciseId).filter(safeId) }); }catch(e){}
+    exerciseIds:ids, exercises:defs }); }catch(e){}
 }
 function endPlan(){ if(window.cloudPushPlan){ try{ window.cloudPushPlan({ _plan:true, active:false, updatedAt:Date.now(), exerciseIds:[] }); }catch(e){} } }
 // add any exercises the shared plan has that I don't (seeded with MY own recommended weights)
@@ -572,6 +577,15 @@ function applyPlan(){
   if(!(S.active && S.active.joint) || !planFresh(lastPlan)) return;
   applyingPlan=true;
   let added=false;
+  // 1) adopt any exercise definitions the plan carries that we don't have locally
+  (lastPlan.exercises||[]).forEach(d=>{
+    if(d && safeId(d.id) && !exById(d.id)){
+      S.exercises.push({ id:d.id, name:String(d.name||"Exercise"),
+        equipment:String(d.equipment||"Other"), angle:String(d.angle||"None"), goal:null });
+      added=true;
+    }
+  });
+  // 2) add any planned exercises missing from my session (seeded with MY OWN recommendations)
   (lastPlan.exerciseIds||[]).forEach(exId=>{
     if(safeId(exId) && exById(exId) && !S.active.entries.some(en=>en.exerciseId===exId)){
       S.active.entries.push({exerciseId:exId, sets:seedSets(exId)}); added=true;
@@ -584,7 +598,12 @@ function applyPlan(){
 // called by the Firebase module with all presence docs (includes the shared plan marker doc)
 window.onPresence=function(list){
   const now=Date.now(); const arr=list||[];
-  lastPlan = arr.find(x=>x && x._plan) || null;
+  const rawPlan = arr.find(x=>x && x._plan) || null;
+  lastPlan = rawPlan ? {                       // untrusted: validate ids before they reach the DOM
+    ...rawPlan,
+    exerciseIds: (Array.isArray(rawPlan.exerciseIds)?rawPlan.exerciseIds:[]).filter(safeId),
+    exercises: (Array.isArray(rawPlan.exercises)?rawPlan.exercises:[]).filter(d=>d&&safeId(d.id))
+  } : null;
   partners=arr
     .filter(p=>p && !p._plan && p.active && safeId(p.profileId) && p.profileId!==S.currentProfileId && (now-(p.updatedAt||0)<PRESENCE_TTL))
     .map(p=>({...p, color:safeColor(p.color)}));
@@ -1325,8 +1344,9 @@ Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGa
     );
     // LIVE LINK presence: one doc per profile, everyone watches the collection
     window.cloudPushPresence = (p)=> setDoc(doc(db, "presence", p.profileId), p);
-    // JOINT workout plan: a marker doc in the same collection (shared exercise list)
-    window.cloudPushPlan = (p)=> setDoc(doc(db, "presence", "__plan__"), p);
+    // JOINT workout plan: a marker doc in the same collection (shared exercise list).
+    // NOTE: Firestore reserves ids matching __*__, so this id must not use that form.
+    window.cloudPushPlan = (p)=> setDoc(doc(db, "presence", "shared-plan"), p);
     onSnapshot(collection(db, "presence"),
       (snap)=>{ const list=[]; snap.forEach(d=>list.push(d.data())); if(window.onPresence) window.onPresence(list); },
       (err)=>{ console.warn("presence error", err); }
