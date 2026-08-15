@@ -573,27 +573,40 @@ function pushPlan(){
 }
 function endPlan(){ if(window.cloudPushPlan){ try{ window.cloudPushPlan({ _plan:true, active:false, updatedAt:Date.now(), exerciseIds:[] }); }catch(e){} } }
 // add any exercises the shared plan has that I don't (seeded with MY own recommended weights)
+// has the user actually put anything into this exercise? (protects logged work from removal sync)
+function entryHasData(en){
+  return (en.sets||[]).some(s=>s.done || (s.weight!=="" && s.weight!=null) || (s.reps!=="" && s.reps!=null));
+}
 function applyPlan(){
   if(!(S.active && S.active.joint) || !planFresh(lastPlan)) return;
   applyingPlan=true;
-  let added=false;
+  let changed=false;
+  const ids=lastPlan.exerciseIds||[];
   // 1) adopt any exercise definitions the plan carries that we don't have locally
   (lastPlan.exercises||[]).forEach(d=>{
     if(d && safeId(d.id) && !exById(d.id)){
       S.exercises.push({ id:d.id, name:String(d.name||"Exercise"),
         equipment:String(d.equipment||"Other"), angle:String(d.angle||"None"), goal:null });
-      added=true;
+      changed=true;
     }
   });
   // 2) add any planned exercises missing from my session (seeded with MY OWN recommendations)
-  (lastPlan.exerciseIds||[]).forEach(exId=>{
+  ids.forEach(exId=>{
     if(safeId(exId) && exById(exId) && !S.active.entries.some(en=>en.exerciseId===exId)){
-      S.active.entries.push({exerciseId:exId, sets:seedSets(exId)}); added=true;
+      S.active.entries.push({exerciseId:exId, sets:seedSets(exId)}); changed=true;
     }
   });
+  // 3) mirror removals — but NEVER drop an exercise I've already logged something into
+  if(S.active.planSynced){
+    for(let i=S.active.entries.length-1;i>=0;i--){
+      const en=S.active.entries[i];
+      if(!ids.includes(en.exerciseId) && !entryHasData(en)){ S.active.entries.splice(i,1); changed=true; }
+    }
+  }
   applyingPlan=false;
-  if(added){ save(); render(); }
-  if(S.active.entries.some(en=>!(lastPlan.exerciseIds||[]).includes(en.exerciseId))) pushPlan();
+  if(changed){ save(); render(); }
+  // on first sync, merge my own exercises into the shared plan so nothing of mine is lost
+  if(!S.active.planSynced){ S.active.planSynced=true; save(); pushPlan(); }
 }
 // called by the Firebase module with all presence docs (includes the shared plan marker doc)
 window.onPresence=function(list){
@@ -608,7 +621,7 @@ window.onPresence=function(list){
     .filter(p=>p && !p._plan && p.active && safeId(p.profileId) && p.profileId!==S.currentProfileId && (now-(p.updatedAt||0)<PRESENCE_TTL))
     .map(p=>({...p, color:safeColor(p.color)}));
   // if a partner is running a joint plan and I'm training, auto-join so my adds also propagate
-  if(S.active && !S.active.joint && planFresh(lastPlan)){ S.active.joint=true; save(); }
+  if(S.active && !S.active.joint && planFresh(lastPlan)){ S.active.joint=true; S.active.planSynced=false; save(); }
   if(S.active && S.active.joint) applyPlan();
   renderPartner();
   const show = partners.length || (S.active && S.active.joint);
@@ -644,7 +657,7 @@ function joinPartner(workoutId){
   if(S.active){ return; }
   if(workoutId && workoutById(workoutId)) startWorkout(workoutId);
   else startEmptyWorkout();
-  if(S.active){ S.active.joint=true; save(); applyPlan(); pushPlan(); render(); }
+  if(S.active){ S.active.joint=true; S.active.planSynced=false; save(); applyPlan(); render(); }
 }
 function leaveTogether(){ if(S.active){ S.active.joint=false; save(); render(); } }
 function renderProfiles(){
@@ -952,6 +965,7 @@ function removeEntry(ei){
   const ex=exById(S.active.entries[ei].exerciseId);
   if(!confirm(`Remove ${ex?ex.name:'exercise'} from this workout?`)) return;
   S.active.entries.splice(ei,1); save(); render();
+  if(S.active.joint) pushPlan();   // mirror the removal to your partner
 }
 function toggleDone(ei,si){
   const st=S.active.entries[ei].sets[si];
