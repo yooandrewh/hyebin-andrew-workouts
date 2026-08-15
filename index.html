@@ -185,13 +185,30 @@
   .divider{height:1px;background:var(--line);margin:14px 0}
   .muted{color:var(--muted)}
   .right{margin-left:auto}
+
+  /* ===== Login gate ===== */
+  #gate{display:none;position:fixed;inset:0;z-index:90;background:var(--bg);
+    align-items:center;justify-content:center;padding:24px calc(24px + env(safe-area-inset-right)) 24px calc(24px + env(safe-area-inset-left))}
+  .gatecard{width:100%;max-width:420px;text-align:center}
+  .gatebrand{font-size:30px;font-weight:800;letter-spacing:-.5px}
+  .gatebrand span{color:var(--accent)}
+  .gatesub{color:var(--muted);font-size:16px;margin:8px 0 28px;font-weight:600}
+  .gatebtns{display:flex;flex-direction:column;gap:14px}
+  .gatebtn{display:flex;align-items:center;justify-content:center;gap:12px;padding:22px;border-radius:18px;
+    background:var(--card);border:2px solid var(--pc,var(--line));color:var(--txt);font-size:22px;font-weight:800;box-shadow:var(--shadow)}
+  .gatebtn:active{background:var(--card2)}
+  .gatebtn .gdot{width:14px;height:14px;border-radius:50%;background:var(--pc,var(--muted))}
+  .gateadd{margin-top:22px;color:var(--accent);font-weight:700;font-size:15px}
+  .joinbtn{flex:0 0 auto;font-size:12px;font-weight:800;color:#fff;background:var(--accent);
+    border-radius:9px;padding:6px 11px}
+  .joinbtn:active{background:var(--accent2)}
 </style>
 </head>
 <body>
 <div class="app">
   <header>
     <div class="topbar">
-      <div class="brand">Hyebin <span>&amp;</span> Andrew</div>
+      <div class="brand" onclick="openGate()" title="Switch user">Hyebin <span>&amp;</span> Andrew</div>
       <button class="btn ghost sm" id="themeBtn" style="width:auto"></button>
     </div>
     <div class="profiles" id="profiles"></div>
@@ -213,6 +230,8 @@
 </div></div></div>
 
 <nav><div class="navinner" id="nav"></div></nav>
+
+<div id="gate"></div>
 
 <script src="version.js"></script>
 <script src="firebase-config.js"></script>
@@ -312,6 +331,7 @@ window.onCloudData=function(remote){
   S.exercises = mergeArrById(S.exercises, remote.exercises);
   S.workouts  = mergeArrById(S.workouts,  remote.workouts);
   S.sessions  = mergeArrById(S.sessions,  remote.sessions);
+  dedupeProfiles();  // collapse any duplicate profiles introduced by the merge
   if(!S.profiles.some(p=>p.id===S.currentProfileId) && S.profiles[0]) S.currentProfileId=S.profiles[0].id;
   localStorage.setItem(STORE_KEY, JSON.stringify(S));
   applyingRemote=false;
@@ -328,6 +348,24 @@ function profile(id){ return S.profiles.find(p=>p.id===id); }
 function curProfile(){ return profile(S.currentProfileId); }
 function exById(id){ return S.exercises.find(e=>e.id===id); }
 function workoutById(id){ return S.workouts.find(w=>w.id===id); }
+// collapse duplicate profiles (same name) that older devices created before stable ids;
+// keeps the canonical stable id and remaps any history/current-profile to it.
+function dedupeProfiles(){
+  const groups={};
+  S.profiles.forEach(p=>{ const k=(p.name||"").trim().toLowerCase(); (groups[k]=groups[k]||[]).push(p); });
+  const remap={}, keep=[];
+  Object.keys(groups).forEach(k=>{
+    const g=groups[k];
+    const winner=g.find(p=>p.id==="hyebin"||p.id==="andrew") || g[0];
+    keep.push(winner);
+    g.forEach(p=>{ if(p.id!==winner.id) remap[p.id]=winner.id; });
+  });
+  if(!Object.keys(remap).length) return false;
+  S.profiles=keep;
+  S.sessions.forEach(s=>{ if(remap[s.profileId]) s.profileId=remap[s.profileId]; });
+  if(remap[S.currentProfileId]) S.currentProfileId=remap[S.currentProfileId];
+  return true;
+}
 
 function exDisplay(ex){
   if(!ex) return "Exercise";
@@ -468,6 +506,33 @@ function applyTheme(){
 }
 function toggleTheme(){ S.theme = S.theme==="dark"?"light":"dark"; save(); applyTheme(); }
 
+/* ---------- login gate: pick who's training, then go ---------- */
+let gateOpen=false;
+function openGate(){
+  gateOpen=true;
+  const el=document.getElementById("gate"); if(!el) return;
+  applyTheme();
+  el.innerHTML=`<div class="gatecard">
+      <div class="gatebrand">Hyebin <span>&amp;</span> Andrew</div>
+      <div class="gatesub">Who's working out?</div>
+      <div class="gatebtns">
+        ${S.profiles.map(p=>`<button class="gatebtn" style="--pc:${safeColor(p.color)}" onclick="enterAs('${p.id}')">
+            <span class="gdot"></span>${escapeHtml(p.name)}</button>`).join("")}
+      </div>
+      <button class="gateadd" onclick="addProfile()">+ Add person</button>
+      <div class="gatesub" style="margin:26px 0 0;font-size:12px">v${escapeHtml(window.APP_VERSION||"dev")}</div>
+    </div>`;
+  el.style.display="flex";
+}
+function enterAs(id){
+  if(id){ S.currentProfileId=id; }
+  S.profilePicked=true;          // remember the choice on this device; don't re-ask each launch
+  save();
+  gateOpen=false;
+  const el=document.getElementById("gate"); if(el) el.style.display="none";
+  render();
+}
+
 /* ============================================================
    LIVE LINK — "working out together" across two phones.
    Each phone publishes its own presence (current exercise, last set,
@@ -487,7 +552,7 @@ function myPresence(){
   a.entries.forEach(en=>en.sets.forEach(s=>{ if(s.done && !s.warmup){ setsDone++; lastSet=(s.weight||0)+" × "+(s.reps||0); }}));
   const prof=profile(a.profileId)||cur;
   return { profileId:a.profileId, name:prof?prof.name:"", color:prof?prof.color:"#888", active:true,
-    workoutName:(workoutById(a.workoutId)||{}).name||"Quick Workout", startedAt:a.startedAt,
+    workoutId:a.workoutId||null, workoutName:(workoutById(a.workoutId)||{}).name||"Quick Workout", startedAt:a.startedAt,
     exercise:ex?exDisplay(ex):"", lastSet, setsDone, restEndsAt: rest.running?rest.endAt:null, updatedAt:Date.now() };
 }
 function pushPresence(){ if(window.cloudPushPresence){ try{ window.cloudPushPresence(myPresence()); }catch(e){} } }
@@ -512,10 +577,19 @@ function renderPartner(){
     const resting = p.restEndsAt && p.restEndsAt>now;
     const info=[p.workoutName, dur, p.exercise, (!resting&&p.lastSet)?("last "+p.lastSet):""].filter(Boolean).join(" · ");
     const restTxt = resting?`<span class="prest">⏱ ${fmtClock(Math.round((p.restEndsAt-now)/1000))}</span>`:"";
+    // offer to JOIN: do the same workout yourself (only if you're not already training)
+    const canJoin = !S.active;
+    const joinBtn = canJoin ? `<button class="joinbtn" onclick="joinPartner('${safeId(p.workoutId)||''}')">Join</button>` : "";
     return `<div class="partner"><span class="plive" style="background:${safeColor(p.color)}"></span>
       <span class="pname" style="color:${safeColor(p.color)}">${escapeHtml(p.name)}</span>
-      <span class="pinfo">${escapeHtml(info)}</span>${restTxt}</div>`;
+      <span class="pinfo">${escapeHtml(info)}</span>${restTxt}${joinBtn}</div>`;
   }).join("");
+}
+// start the same workout your partner is doing (same template, or an empty session)
+function joinPartner(workoutId){
+  if(S.active){ return; }
+  if(workoutId && workoutById(workoutId)) startWorkout(workoutId);
+  else startEmptyWorkout();
 }
 function renderProfiles(){
   const el=document.getElementById("profiles");
@@ -744,7 +818,8 @@ function saveProfile(){
   if(!n) return;
   const color=PROFILE_COLORS[S.profiles.length % PROFILE_COLORS.length];
   const p={id:uid(),name:n,color};
-  S.profiles.push(p); S.currentProfileId=p.id; save(); closeModal(); render();
+  S.profiles.push(p); S.currentProfileId=p.id; save(); closeModal();
+  if(gateOpen){ enterAs(p.id); } else { render(); }
 }
 
 /* ----- templates (saved reusable workouts) ----- */
@@ -1168,12 +1243,18 @@ function closeModal(){ if(modal){ modal.remove(); modal=null; } }
 function escapeHtml(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 document.getElementById("themeBtn").addEventListener("click",toggleTheme);
 
+// one-time cleanup of any legacy duplicate profiles
+if(dedupeProfiles()) save();
+
 // resume an active session timer after reload
 if(S.active){ startSessionTimer(); }
 render();
+// show the "who's working out?" gate only until a profile is picked on this device
+// (after that it goes straight in; tap the header title to switch later)
+if(!S.active && !S.profilePicked){ openGate(); }
 
 // expose for inline handlers
-Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,
+Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGate,enterAs,joinPartner,
   newTemplate,saveTemplate,openTemplate,renameWorkout,removeTemplateExercise,deleteWorkout,
   startEmptyWorkout,startWorkout,openActive,openSession,addSet,removeSet,
   removeEntry,toggleDone,pickExercise,pickExerciseActive,pickExerciseForTemplate,onExType,pick,
