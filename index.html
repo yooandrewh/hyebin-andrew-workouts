@@ -202,6 +202,11 @@
   .joinbtn{flex:0 0 auto;font-size:12px;font-weight:800;color:#fff;background:var(--accent);
     border-radius:9px;padding:6px 11px}
   .joinbtn:active{background:var(--accent2)}
+  .prbadge{display:inline-block;background:linear-gradient(135deg,#ffb020,#ff8a00);color:#3a2400;
+    font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;margin-left:7px;vertical-align:middle}
+  .prline{color:var(--warn);font-size:12px;font-weight:700;margin-top:6px}
+  .editbtn{color:var(--accent);font-weight:700;font-size:13px;padding:8px 12px;background:var(--card2);
+    border:1px solid var(--line);border-radius:10px}
 </style>
 </head>
 <body>
@@ -469,6 +474,35 @@ function sessionVolume(sess){
   return Math.round(v);
 }
 
+/* ---------- personal records ----------
+   Strength is compared with an estimated 1-rep max (Epley), so a heavier single and a
+   lighter set of 10 are on the same scale. Warmups never count. */
+function e1rm(w,r){ w=Number(w)||0; r=Number(r)||0; if(w<=0||r<=0) return 0; return w*(1+r/30); }
+function bestSetIn(entry){
+  let best=null;
+  (entry&&entry.sets||[]).forEach(s=>{ if(s.warmup) return;
+    const v=e1rm(s.weight,s.reps); if(v>0 && (!best||v>best.v)) best={v, weight:Number(s.weight)||0, reps:Number(s.reps)||0}; });
+  return best;
+}
+// best effort for this profile+exercise, optionally only counting sessions before a timestamp
+function prFor(profileId, exerciseId, beforeTs){
+  let best=null;
+  S.sessions.forEach(s=>{
+    if(s.profileId!==profileId) return;
+    if(beforeTs!=null && !(s.endedAt<beforeTs)) return;
+    s.entries.forEach(en=>{ if(en.exerciseId!==exerciseId) return;
+      const b=bestSetIn(en); if(b && (!best||b.v>best.v)) best={...b, at:s.endedAt}; });
+  });
+  return best;
+}
+// did this session set a new PR for that exercise? (strictly better than everything earlier)
+function sessionSetPR(sess, exerciseId){
+  const en=sess.entries.find(e=>e.exerciseId===exerciseId); if(!en) return null;
+  const mine=bestSetIn(en); if(!mine) return null;
+  const prev=prFor(sess.profileId, exerciseId, sess.endedAt);
+  return (!prev || mine.v>prev.v+0.001) ? mine : null;
+}
+
 /* ============================================================
    RENDER
    ============================================================ */
@@ -551,77 +585,96 @@ function myPresence(){
   let lastSet="", setsDone=0;
   a.entries.forEach(en=>en.sets.forEach(s=>{ if(s.done && !s.warmup){ setsDone++; lastSet=(s.weight||0)+" × "+(s.reps||0); }}));
   const prof=profile(a.profileId)||cur;
+  // the exercise list travels with presence (always published) so "Together" can start any time
+  const ids=a.entries.map(e=>e.exerciseId).filter(safeId);
+  const defs=ids.map(id=>exById(id)).filter(Boolean)
+    .map(e=>({id:e.id,name:e.name,equipment:e.equipment,angle:e.angle}));
   return { profileId:a.profileId, name:prof?prof.name:"", color:prof?prof.color:"#888", active:true,
     workoutId:a.workoutId||null, workoutName:(workoutById(a.workoutId)||{}).name||"Quick Workout", startedAt:a.startedAt,
-    exercise:ex?exDisplay(ex):"", lastSet, setsDone, restEndsAt: rest.running?rest.endAt:null, updatedAt:Date.now() };
+    exercise:ex?exDisplay(ex):"", lastSet, setsDone, restEndsAt: rest.running?rest.endAt:null,
+    joint: !!a.joint, listAt: a.listAt||a.startedAt, exerciseIds:ids, exercises:defs,
+    removed: a.removed||{},
+    updatedAt:Date.now() };
 }
 function pushPresence(){ if(window.cloudPushPresence){ try{ window.cloudPushPresence(myPresence()); }catch(e){} } }
 
 /* ---- JOINT workout: the shared EXERCISE LIST syncs live; each person's weights stay private.
-   The shared plan is stored as a marker doc in the presence collection (no extra rules needed). ---- */
-let lastPlan=null, applyingPlan=false;
-function planFresh(p){ return !!(p && p.active && (Date.now()-(p.updatedAt||0) < PRESENCE_TTL)); }
-function pushPlan(){
-  if(applyingPlan || !(S.active && S.active.joint) || !window.cloudPushPlan) return;
-  const ids=S.active.entries.map(e=>e.exerciseId).filter(safeId);
-  // carry the exercise DEFINITIONS with the plan so the partner can add them even if the
-  // shared library hasn't synced yet (or got clobbered by a concurrent full-document write)
-  const defs=ids.map(id=>exById(id)).filter(Boolean)
-    .map(e=>({id:e.id,name:e.name,equipment:e.equipment,angle:e.angle}));
-  try{ window.cloudPushPlan({ _plan:true, active:true, startedAt:S.active.startedAt, updatedAt:Date.now(),
-    exerciseIds:ids, exercises:defs }); }catch(e){}
-}
-function endPlan(){ if(window.cloudPushPlan){ try{ window.cloudPushPlan({ _plan:true, active:false, updatedAt:Date.now(), exerciseIds:[] }); }catch(e){} } }
+   The list rides on each person's own presence doc (always published), so "Together" can be
+   switched on at any time by either person — no chicken-and-egg with a separate plan doc. ---- */
+let applyingPlan=false;
+// note when I change my own exercise list, so the newer change wins over a stale partner list
+function markListChanged(){ if(S.active){ S.active.listAt=Date.now(); save(); pushPresence(); } }
+function pushPlan(){ pushPresence(); }   // list rides along with presence now
+function endPlan(){ pushPresence(); }
 // add any exercises the shared plan has that I don't (seeded with MY own recommended weights)
 // has the user actually put anything into this exercise? (protects logged work from removal sync)
 function entryHasData(en){
   return (en.sets||[]).some(s=>s.done || (s.weight!=="" && s.weight!=null) || (s.reps!=="" && s.reps!=null));
 }
+/* Merge rule: ADDS always union (so nobody's exercise is ever lost), REMOVALS travel as
+   tombstones {exerciseId: whenRemoved}. A tombstone only wins over an entry that was added
+   BEFORE it, and never removes an exercise you've already logged into. This converges no
+   matter what order the two phones make changes in. */
 function applyPlan(){
-  if(!(S.active && S.active.joint) || !planFresh(lastPlan)) return;
+  if(!(S.active && S.active.joint)) return;
+  const src=partners.filter(p=>Array.isArray(p.exerciseIds))
+                    .sort((a,b)=>((b.joint?1:0)-(a.joint?1:0)) || ((b.listAt||0)-(a.listAt||0)))[0];
+  if(!src) return;
+  const theirAt=src.listAt||0;
+  const theirRemoved=(src.removed && typeof src.removed==="object") ? src.removed : {};
+  const tomb=S.active.removed=S.active.removed||{};
   applyingPlan=true;
   let changed=false;
-  const ids=lastPlan.exerciseIds||[];
-  // 1) adopt any exercise definitions the plan carries that we don't have locally
-  (lastPlan.exercises||[]).forEach(d=>{
+  // adopt exercise DEFINITIONS we don't have (so a brand-new lift resolves immediately)
+  (src.exercises||[]).forEach(d=>{
     if(d && safeId(d.id) && !exById(d.id)){
       S.exercises.push({ id:d.id, name:String(d.name||"Exercise"),
         equipment:String(d.equipment||"Other"), angle:String(d.angle||"None"), goal:null });
       changed=true;
     }
   });
-  // 2) add any planned exercises missing from my session (seeded with MY OWN recommendations)
-  ids.forEach(exId=>{
-    if(safeId(exId) && exById(exId) && !S.active.entries.some(en=>en.exerciseId===exId)){
-      S.active.entries.push({exerciseId:exId, sets:seedSets(exId)}); changed=true;
-    }
+  // ADD anything of theirs I'm missing (seeded with MY OWN recommendations),
+  // unless I removed it more recently than their last list change
+  (src.exerciseIds||[]).forEach(exId=>{
+    if(!safeId(exId) || !exById(exId)) return;
+    if(S.active.entries.some(en=>en.exerciseId===exId)) return;
+    if(tomb[exId] && tomb[exId]>=theirAt) return;          // my removal is newer — stay removed
+    S.active.entries.push({exerciseId:exId, sets:seedSets(exId), addedAt:Date.now()});
+    delete tomb[exId];
+    changed=true;
   });
-  // 3) mirror removals — but NEVER drop an exercise I've already logged something into
-  if(S.active.planSynced){
-    for(let i=S.active.entries.length-1;i>=0;i--){
+  // apply THEIR removals, and carry their tombstones forward
+  Object.keys(theirRemoved).forEach(exId=>{
+    if(!safeId(exId)) return;
+    const ts=Number(theirRemoved[exId])||0;
+    const i=S.active.entries.findIndex(en=>en.exerciseId===exId);
+    if(i>=0){
       const en=S.active.entries[i];
-      if(!ids.includes(en.exerciseId) && !entryHasData(en)){ S.active.entries.splice(i,1); changed=true; }
+      const addedAt=en.addedAt||S.active.startedAt||0;
+      if(ts>addedAt && !entryHasData(en)){ S.active.entries.splice(i,1); changed=true; }  // never drop logged work
     }
-  }
+    if(ts>(tomb[exId]||0)){ tomb[exId]=ts; changed=true; }
+  });
   applyingPlan=false;
-  if(changed){ save(); render(); }
-  // on first sync, merge my own exercises into the shared plan so nothing of mine is lost
-  if(!S.active.planSynced){ S.active.planSynced=true; save(); pushPlan(); }
+  if(changed){ save(); render(); pushPresence(); }
 }
 // called by the Firebase module with all presence docs (includes the shared plan marker doc)
 window.onPresence=function(list){
   const now=Date.now(); const arr=list||[];
-  const rawPlan = arr.find(x=>x && x._plan) || null;
-  lastPlan = rawPlan ? {                       // untrusted: validate ids before they reach the DOM
-    ...rawPlan,
-    exerciseIds: (Array.isArray(rawPlan.exerciseIds)?rawPlan.exerciseIds:[]).filter(safeId),
-    exercises: (Array.isArray(rawPlan.exercises)?rawPlan.exercises:[]).filter(d=>d&&safeId(d.id))
-  } : null;
   partners=arr
     .filter(p=>p && !p._plan && p.active && safeId(p.profileId) && p.profileId!==S.currentProfileId && (now-(p.updatedAt||0)<PRESENCE_TTL))
-    .map(p=>({...p, color:safeColor(p.color)}));
-  // if a partner is running a joint plan and I'm training, auto-join so my adds also propagate
-  if(S.active && !S.active.joint && planFresh(lastPlan)){ S.active.joint=true; S.active.planSynced=false; save(); }
+    .map(p=>{
+      const rem={};
+      if(p.removed && typeof p.removed==="object" && !Array.isArray(p.removed)){
+        Object.keys(p.removed).forEach(k=>{ if(safeId(k)) rem[k]=Number(p.removed[k])||0; });
+      }
+      return {...p, color:safeColor(p.color),   // untrusted: validate before it reaches the DOM
+        exerciseIds:(Array.isArray(p.exerciseIds)?p.exerciseIds:[]).filter(safeId),
+        exercises:(Array.isArray(p.exercises)?p.exercises:[]).filter(d=>d&&safeId(d.id)),
+        removed:rem};
+    });
+  // if my partner switched Together on, join them automatically so it only takes one tap
+  if(S.active && !S.active.joint && partners.some(p=>p.joint)){ S.active.joint=true; S.active.planSynced=false; save(); }
   if(S.active && S.active.joint) applyPlan();
   renderPartner();
   const show = partners.length || (S.active && S.active.joint);
@@ -645,7 +698,10 @@ function renderPartner(){
     const resting = p.restEndsAt && p.restEndsAt>now;
     const info=[p.workoutName, dur, p.exercise, (!resting&&p.lastSet)?("last "+p.lastSet):""].filter(Boolean).join(" · ");
     const restTxt = resting?`<span class="prest">⏱ ${fmtClock(Math.round((p.restEndsAt-now)/1000))}</span>`:"";
-    const joinBtn = (!S.active) ? `<button class="joinbtn" onclick="joinPartner('${safeId(p.workoutId)||''}')">Join</button>` : "";
+    // "Join" starts the same workout; "Together" links lists when you're already training
+    const joinBtn = (!S.active)
+      ? `<button class="joinbtn" onclick="joinPartner('${safeId(p.workoutId)||''}')">Join</button>`
+      : (!joint ? `<button class="joinbtn" onclick="startTogether()">Together</button>` : "");
     return `<div class="partner"><span class="plive" style="background:${safeColor(p.color)}"></span>
       <span class="pname" style="color:${safeColor(p.color)}">${escapeHtml(p.name)}</span>
       <span class="pinfo">${escapeHtml(info)}</span>${restTxt}${joinBtn}</div>`;
@@ -657,9 +713,14 @@ function joinPartner(workoutId){
   if(S.active){ return; }
   if(workoutId && workoutById(workoutId)) startWorkout(workoutId);
   else startEmptyWorkout();
-  if(S.active){ S.active.joint=true; S.active.planSynced=false; save(); applyPlan(); render(); }
+  if(S.active){ S.active.joint=true; S.active.planSynced=false; S.active.lastAdoptedAt=0; save(); applyPlan(); render(); pushPresence(); }
 }
-function leaveTogether(){ if(S.active){ S.active.joint=false; save(); render(); } }
+function startTogether(){
+  if(!S.active) return;
+  S.active.joint=true; S.active.planSynced=false; S.active.lastAdoptedAt=0;
+  save(); applyPlan(); render(); pushPresence();
+}
+function leaveTogether(){ if(S.active){ S.active.joint=false; save(); render(); pushPresence(); } }
 function renderProfiles(){
   const el=document.getElementById("profiles");
   el.style.justifyContent="space-between";
@@ -801,7 +862,15 @@ function viewActive(){
         <td><button class="delset" onclick="removeSet(${ei},${si})">×</button></td>
       </tr>`;
     });
+    // PR line: your best ever for this lift, and a live callout when today beats it
+    const pr=prFor(a.profileId, en.exerciseId);
+    const todayBest=bestSetIn(en);
+    const beatIt = todayBest && (!pr || todayBest.v>pr.v+0.001);
+    const prTxt = beatIt
+      ? `🏆 New PR — ${todayBest.weight} × ${todayBest.reps}${pr?` (beat ${pr.weight} × ${pr.reps})`:""}`
+      : (pr?`🏆 PR: ${pr.weight} × ${pr.reps}`:"");
     html += `</tbody></table>
+      ${prTxt?`<div class="prline">${escapeHtml(prTxt)}</div>`:""}
       ${rec.note?`<div class="recnote"><span>↗</span><span>${rec.note}</span></div>`:""}
       <button class="addset" onclick="addSet(${ei})">+ Add Set</button>
       ${guideBanner(ex)}
@@ -964,8 +1033,12 @@ function removeSet(ei,si){ S.active.entries[ei].sets.splice(si,1); save(); rende
 function removeEntry(ei){
   const ex=exById(S.active.entries[ei].exerciseId);
   if(!confirm(`Remove ${ex?ex.name:'exercise'} from this workout?`)) return;
-  S.active.entries.splice(ei,1); save(); render();
-  if(S.active.joint) pushPlan();   // mirror the removal to your partner
+  const goneId=S.active.entries[ei].exerciseId;
+  S.active.entries.splice(ei,1);
+  S.active.removed=S.active.removed||{};
+  S.active.removed[goneId]=Date.now();   // tombstone so the removal reaches your partner
+  save(); render();
+  markListChanged();
 }
 function toggleDone(ei,si){
   const st=S.active.entries[ei].sets[si];
@@ -1039,9 +1112,10 @@ function addExistingExercise(exId){
     save(); closeModal(); render(); return;
   }
   if(!S.active){ alert("Start a workout first."); return; }
-  S.active.entries.push({exerciseId:exId, sets:seedSets(exId)});
+  S.active.entries.push({exerciseId:exId, sets:seedSets(exId), addedAt:Date.now()});
+  if(S.active.removed) delete S.active.removed[exId];   // re-adding clears my tombstone
   save(); closeModal(); render();
-  if(S.active.joint) pushPlan();   // share the added exercise with your partner
+  if(!applyingPlan) markListChanged();   // share the added exercise with your partner
 }
 function createAndAddExercise(){
   const name=(document.getElementById("exname").value||"").trim();
@@ -1327,7 +1401,7 @@ render();
 if(!S.active && !S.profilePicked){ openGate(); }
 
 // expose for inline handlers
-Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGate,enterAs,joinPartner,leaveTogether,
+Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGate,enterAs,joinPartner,leaveTogether,startTogether,
   newTemplate,saveTemplate,openTemplate,renameWorkout,removeTemplateExercise,deleteWorkout,
   startEmptyWorkout,startWorkout,openActive,openSession,addSet,removeSet,
   removeEntry,toggleDone,pickExercise,pickExerciseActive,pickExerciseForTemplate,onExType,pick,
@@ -1358,9 +1432,7 @@ Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGa
     );
     // LIVE LINK presence: one doc per profile, everyone watches the collection
     window.cloudPushPresence = (p)=> setDoc(doc(db, "presence", p.profileId), p);
-    // JOINT workout plan: a marker doc in the same collection (shared exercise list).
-    // NOTE: Firestore reserves ids matching __*__, so this id must not use that form.
-    window.cloudPushPlan = (p)=> setDoc(doc(db, "presence", "shared-plan"), p);
+    // (the joint exercise list travels inside each person's presence doc — no separate doc)
     onSnapshot(collection(db, "presence"),
       (snap)=>{ const list=[]; snap.forEach(d=>list.push(d.data())); if(window.onPresence) window.onPresence(list); },
       (err)=>{ console.warn("presence error", err); }
