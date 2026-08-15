@@ -337,6 +337,7 @@ window.onCloudData=function(remote){
   applyingRemote=false;
   setSync("✓ synced");
   render();
+  if(S.active && S.active.joint) applyPlan();  // now that exercises synced, add any joint ones
   // if we held data the cloud didn't have, push our superset so the other phone gets it
   if(extra && window.cloudPush){ try{ window.cloudPush(syncedState()); }catch(e){} }
 };
@@ -519,7 +520,6 @@ function openGate(){
         ${S.profiles.map(p=>`<button class="gatebtn" style="--pc:${safeColor(p.color)}" onclick="enterAs('${p.id}')">
             <span class="gdot"></span>${escapeHtml(p.name)}</button>`).join("")}
       </div>
-      <button class="gateadd" onclick="addProfile()">+ Add person</button>
       <div class="gatesub" style="margin:26px 0 0;font-size:12px">v${escapeHtml(window.APP_VERSION||"dev")}</div>
     </div>`;
   el.style.display="flex";
@@ -556,50 +556,85 @@ function myPresence(){
     exercise:ex?exDisplay(ex):"", lastSet, setsDone, restEndsAt: rest.running?rest.endAt:null, updatedAt:Date.now() };
 }
 function pushPresence(){ if(window.cloudPushPresence){ try{ window.cloudPushPresence(myPresence()); }catch(e){} } }
-// called by the Firebase module with all presence docs
+
+/* ---- JOINT workout: the shared EXERCISE LIST syncs live; each person's weights stay private.
+   The shared plan is stored as a marker doc in the presence collection (no extra rules needed). ---- */
+let lastPlan=null, applyingPlan=false;
+function planFresh(p){ return !!(p && p.active && (Date.now()-(p.updatedAt||0) < PRESENCE_TTL)); }
+function pushPlan(){
+  if(applyingPlan || !(S.active && S.active.joint) || !window.cloudPushPlan) return;
+  try{ window.cloudPushPlan({ _plan:true, active:true, startedAt:S.active.startedAt, updatedAt:Date.now(),
+    exerciseIds:S.active.entries.map(e=>e.exerciseId).filter(safeId) }); }catch(e){}
+}
+function endPlan(){ if(window.cloudPushPlan){ try{ window.cloudPushPlan({ _plan:true, active:false, updatedAt:Date.now(), exerciseIds:[] }); }catch(e){} } }
+// add any exercises the shared plan has that I don't (seeded with MY own recommended weights)
+function applyPlan(){
+  if(!(S.active && S.active.joint) || !planFresh(lastPlan)) return;
+  applyingPlan=true;
+  let added=false;
+  (lastPlan.exerciseIds||[]).forEach(exId=>{
+    if(safeId(exId) && exById(exId) && !S.active.entries.some(en=>en.exerciseId===exId)){
+      S.active.entries.push({exerciseId:exId, sets:seedSets(exId)}); added=true;
+    }
+  });
+  applyingPlan=false;
+  if(added){ save(); render(); }
+  if(S.active.entries.some(en=>!(lastPlan.exerciseIds||[]).includes(en.exerciseId))) pushPlan();
+}
+// called by the Firebase module with all presence docs (includes the shared plan marker doc)
 window.onPresence=function(list){
-  const now=Date.now();
-  partners=(list||[])
-    .filter(p=>p && p.active && safeId(p.profileId) && p.profileId!==S.currentProfileId && (now-(p.updatedAt||0)<PRESENCE_TTL))
+  const now=Date.now(); const arr=list||[];
+  lastPlan = arr.find(x=>x && x._plan) || null;
+  partners=arr
+    .filter(p=>p && !p._plan && p.active && safeId(p.profileId) && p.profileId!==S.currentProfileId && (now-(p.updatedAt||0)<PRESENCE_TTL))
     .map(p=>({...p, color:safeColor(p.color)}));
+  // if a partner is running a joint plan and I'm training, auto-join so my adds also propagate
+  if(S.active && !S.active.joint && planFresh(lastPlan)){ S.active.joint=true; save(); }
+  if(S.active && S.active.joint) applyPlan();
   renderPartner();
-  if(partners.length && !partnerTicker) partnerTicker=setInterval(renderPartner,1000);
-  if(!partners.length && partnerTicker){ clearInterval(partnerTicker); partnerTicker=null; }
+  const show = partners.length || (S.active && S.active.joint);
+  if(show && !partnerTicker) partnerTicker=setInterval(renderPartner,1000);
+  if(!show && partnerTicker){ clearInterval(partnerTicker); partnerTicker=null; }
 };
 function renderPartner(){
   const el=document.getElementById("partner"); if(!el) return;
   const now=Date.now();
   const live=partners.filter(p=>now-(p.updatedAt||0)<PRESENCE_TTL);
-  if(!live.length){ el.innerHTML=""; el.style.display="none"; if(partnerTicker){ clearInterval(partnerTicker); partnerTicker=null; } return; }
+  const joint = !!(S.active && S.active.joint);
+  const show = live.length || joint;
+  if(!show){ el.innerHTML=""; el.style.display="none"; if(partnerTicker){ clearInterval(partnerTicker); partnerTicker=null; } return; }
   el.style.display="block";
-  el.innerHTML=live.map(p=>{
+  let html = joint ? `<div class="partner"><span class="plive" style="background:var(--good)"></span>
+      <span class="pname" style="color:var(--good)">Together</span>
+      <span class="pinfo">exercises sync · weights stay yours</span>
+      <button class="joinbtn" style="background:var(--card2);color:var(--muted)" onclick="leaveTogether()">Leave</button></div>` : "";
+  html += live.map(p=>{
     const dur=p.startedAt?fmtDur((now-p.startedAt)/1000):"";
     const resting = p.restEndsAt && p.restEndsAt>now;
     const info=[p.workoutName, dur, p.exercise, (!resting&&p.lastSet)?("last "+p.lastSet):""].filter(Boolean).join(" · ");
     const restTxt = resting?`<span class="prest">⏱ ${fmtClock(Math.round((p.restEndsAt-now)/1000))}</span>`:"";
-    // offer to JOIN: do the same workout yourself (only if you're not already training)
-    const canJoin = !S.active;
-    const joinBtn = canJoin ? `<button class="joinbtn" onclick="joinPartner('${safeId(p.workoutId)||''}')">Join</button>` : "";
+    const joinBtn = (!S.active) ? `<button class="joinbtn" onclick="joinPartner('${safeId(p.workoutId)||''}')">Join</button>` : "";
     return `<div class="partner"><span class="plive" style="background:${safeColor(p.color)}"></span>
       <span class="pname" style="color:${safeColor(p.color)}">${escapeHtml(p.name)}</span>
       <span class="pinfo">${escapeHtml(info)}</span>${restTxt}${joinBtn}</div>`;
   }).join("");
+  el.innerHTML=html;
 }
-// start the same workout your partner is doing (same template, or an empty session)
+// start the same workout your partner is doing and sync exercises with them
 function joinPartner(workoutId){
   if(S.active){ return; }
   if(workoutId && workoutById(workoutId)) startWorkout(workoutId);
   else startEmptyWorkout();
+  if(S.active){ S.active.joint=true; save(); applyPlan(); pushPlan(); render(); }
 }
+function leaveTogether(){ if(S.active){ S.active.joint=false; save(); render(); } }
 function renderProfiles(){
   const el=document.getElementById("profiles");
-  el.innerHTML = S.profiles.map(p=>`
-    <button class="chip ${p.id===S.currentProfileId?'active':''}"
-      style="${p.id===S.currentProfileId?`background:${safeColor(p.color)}`:''}"
-      onclick="switchProfile('${p.id}')" oncontextmenu="return false">
-      <span class="dot" style="background:${p.id===S.currentProfileId?'#fff':safeColor(p.color)}"></span>${escapeHtml(p.name)}
-    </button>`).join("")
-    + `<button class="chip add" onclick="addProfile()">+ Person</button>`;
+  el.style.justifyContent="space-between";
+  const p=curProfile();
+  el.innerHTML = (p ? `<button class="chip active" style="background:${safeColor(p.color)}" onclick="openGate()" title="Switch user">
+      <span class="dot" style="background:#fff"></span>${escapeHtml(p.name)}</button>` : "")
+    + `<span style="color:var(--muted);font-size:11px;font-weight:600;white-space:nowrap">v${escapeHtml(window.APP_VERSION||"dev")}</span>`;
 }
 function renderNav(){
   const tabs=[
@@ -973,6 +1008,7 @@ function addExistingExercise(exId){
   if(!S.active){ alert("Start a workout first."); return; }
   S.active.entries.push({exerciseId:exId, sets:seedSets(exId)});
   save(); closeModal(); render();
+  if(S.active.joint) pushPlan();   // share the added exercise with your partner
 }
 function createAndAddExercise(){
   const name=(document.getElementById("exname").value||"").trim();
@@ -1001,8 +1037,9 @@ function finishWorkout(){
     profileId:a.profileId, startedAt:a.startedAt, endedAt:Date.now(),
     durationSec:Math.round((Date.now()-a.startedAt)/1000), entries };
   S.sessions.push(sess);
-  const sourceId=a.workoutId;
+  const sourceId=a.workoutId, wasJoint=a.joint;
   S.active=null; stopSessionTimer(); stopRest(); save();
+  if(wasJoint) endPlan();
   maybeOfferTemplate(sess, sourceId);
 }
 
@@ -1047,7 +1084,9 @@ function tplDone(){ const sid=pendingTpl?pendingTpl.sessId:null; pendingTpl=null
 function gotoSession(sid){ route.tab="history"; route.view= sid?"session":"list"; route.id=sid; render(); }
 function cancelWorkout(silent){
   if(!silent && !confirm("Discard this workout? Nothing will be saved.")) return;
+  const wasJoint = S.active && S.active.joint;
   S.active=null; stopSessionTimer(); stopRest(); save();
+  if(wasJoint) endPlan();
   route.tab="workouts"; route.view="list"; render();
 }
 function deleteSession(id){
@@ -1156,7 +1195,8 @@ function rpeHelp(){
    TIMERS
    ============================================================ */
 let sessTimer=null, presHb=null;
-function startSessionTimer(){ stopSessionTimer(); sessTimer=setInterval(tickSession,1000); pushPresence(); presHb=setInterval(pushPresence,20000); }
+function startSessionTimer(){ stopSessionTimer(); sessTimer=setInterval(tickSession,1000); pushPresence();
+  presHb=setInterval(()=>{ pushPresence(); if(S.active&&S.active.joint) pushPlan(); },20000); }
 function stopSessionTimer(){ if(sessTimer) clearInterval(sessTimer); sessTimer=null; if(presHb) clearInterval(presHb); presHb=null; }
 function tickSession(){
   if(!S.active){ stopSessionTimer(); return; }
@@ -1254,7 +1294,7 @@ render();
 if(!S.active && !S.profilePicked){ openGate(); }
 
 // expose for inline handlers
-Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGate,enterAs,joinPartner,
+Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGate,enterAs,joinPartner,leaveTogether,
   newTemplate,saveTemplate,openTemplate,renameWorkout,removeTemplateExercise,deleteWorkout,
   startEmptyWorkout,startWorkout,openActive,openSession,addSet,removeSet,
   removeEntry,toggleDone,pickExercise,pickExerciseActive,pickExerciseForTemplate,onExType,pick,
@@ -1285,6 +1325,8 @@ Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGa
     );
     // LIVE LINK presence: one doc per profile, everyone watches the collection
     window.cloudPushPresence = (p)=> setDoc(doc(db, "presence", p.profileId), p);
+    // JOINT workout plan: a marker doc in the same collection (shared exercise list)
+    window.cloudPushPlan = (p)=> setDoc(doc(db, "presence", "__plan__"), p);
     onSnapshot(collection(db, "presence"),
       (snap)=>{ const list=[]; snap.forEach(d=>list.push(d.data())); if(window.onPresence) window.onPresence(list); },
       (err)=>{ console.warn("presence error", err); }
