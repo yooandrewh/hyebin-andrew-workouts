@@ -205,6 +205,10 @@
   .prbadge{display:inline-block;background:linear-gradient(135deg,#ffb020,#ff8a00);color:#3a2400;
     font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;margin-left:7px;vertical-align:middle}
   .prline{color:var(--warn);font-size:12px;font-weight:700;margin-top:6px}
+  #updbar{position:fixed;left:0;right:0;top:0;z-index:120;display:none;background:var(--good);color:#053;
+    padding:calc(env(safe-area-inset-top) + 10px) 14px 12px;text-align:center;font-weight:800;font-size:15px;
+    box-shadow:0 4px 16px rgba(0,0,0,.25)}
+  #updbar span{text-decoration:underline}
   .editbtn{color:var(--accent);font-weight:700;font-size:13px;padding:8px 12px;background:var(--card2);
     border:1px solid var(--line);border-radius:10px}
 </style>
@@ -237,6 +241,7 @@
 <nav><div class="navinner" id="nav"></div></nav>
 
 <div id="gate"></div>
+<div id="updbar" onclick="applyUpdate()">New version ready — <span>tap to update</span></div>
 
 <script src="version.js"></script>
 <script src="firebase-config.js"></script>
@@ -287,7 +292,8 @@ function save(){ localStorage.setItem(STORE_KEY, JSON.stringify(S)); scheduleClo
    ============================================================ */
 let applyingRemote=false, cloudTimer=null, lastSync="";
 function cloudOn(){ return !!(window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.apiKey); }
-function syncedState(){ return {profiles:S.profiles, exercises:S.exercises, workouts:S.workouts, sessions:S.sessions}; }
+function syncedState(){ return {profiles:S.profiles, exercises:S.exercises, workouts:S.workouts, sessions:S.sessions,
+  restDefault:S.restDefault}; }
 function setSync(msg){ lastSync=msg; const s=document.getElementById("syncStat"); if(s) s.textContent=msg; }
 function scheduleCloudPush(){
   if(applyingRemote || !window.cloudPush) return;
@@ -320,9 +326,11 @@ function sanitizeCloud(r){
     workouts: arr(r.workouts).filter(w=>w&&safeId(w.id))
       .map(w=>({...w, exerciseIds: arr(w.exerciseIds).filter(safeId)})),
     sessions: arr(r.sessions).filter(s=>s&&safeId(s.id))
-      .map(s=>({...s, entries: arr(s.entries).filter(en=>en&&safeId(en.exerciseId))}))
+      .map(s=>({...s, entries: arr(s.entries).filter(en=>en&&safeId(en.exerciseId))})),
+    restDefault: safeRest(r.restDefault)
   };
 }
+function safeRest(v){ v=Number(v); return (isFinite(v)&&v>=15&&v<=600) ? Math.round(v/5)*5 : null; }
 // called by the Firebase module when remote data changes
 window.onCloudData=function(remote){
   if(!remote) return;
@@ -336,6 +344,7 @@ window.onCloudData=function(remote){
   S.exercises = mergeArrById(S.exercises, remote.exercises);
   S.workouts  = mergeArrById(S.workouts,  remote.workouts);
   S.sessions  = mergeArrById(S.sessions,  remote.sessions);
+  if(remote.restDefault!=null) S.restDefault=remote.restDefault;   // shared rest length
   dedupeProfiles();  // collapse any duplicate profiles introduced by the merge
   if(!S.profiles.some(p=>p.id===S.currentProfileId) && S.profiles[0]) S.currentProfileId=S.profiles[0].id;
   localStorage.setItem(STORE_KEY, JSON.stringify(S));
@@ -540,6 +549,33 @@ function applyTheme(){
   if(tc) tc.setAttribute("content", dark ? "#0e0f13" : "#f4f6fa");
 }
 function toggleTheme(){ S.theme = S.theme==="dark"?"light":"dark"; save(); applyTheme(); }
+
+/* ============================================================
+   SELF-UPDATE — a Home-Screen PWA can sit on cached HTML forever, which silently
+   leaves one phone running old sync code. Poll the deployed version stamp and offer
+   (or quietly apply) an update.
+   ============================================================ */
+let latestVersion=null;
+async function checkForUpdate(){
+  try{
+    const r=await fetch("version.js?cb="+Date.now(), {cache:"no-store"});
+    if(!r.ok) return;
+    const m=(await r.text()).match(/"([^"]+)"/);
+    if(!m) return;
+    latestVersion=m[1];
+    const cur=window.APP_VERSION||"";
+    if(cur && latestVersion && latestVersion!==cur){
+      // nothing in flight → just update; otherwise let them finish the set first
+      if(!S.active && !modal){ applyUpdate(); return; }
+      const b=document.getElementById("updbar"); if(b) b.style.display="block";
+    }
+  }catch(e){}
+}
+function applyUpdate(){
+  // a fresh query string guarantees the HTML is refetched instead of served from cache
+  const v=latestVersion||Date.now();
+  location.replace(location.pathname+"?v="+encodeURIComponent(v));
+}
 
 /* ---------- login gate: pick who's training, then go ---------- */
 let gateOpen=false;
@@ -878,6 +914,7 @@ function viewActive(){
   });
 
   html += `<button class="btn sec" onclick="pickExerciseActive()">+ Add Exercise</button>`;
+  html += `<button class="btn sec" style="margin-top:10px" onclick="restSettings()">⏱ Rest timer: ${fmtClock(S.restDefault||90)}</button>`;
   html += `<button class="btn danger" style="margin-top:10px" onclick="cancelWorkout()">Cancel Workout</button>`;
   return html;
 }
@@ -1282,6 +1319,24 @@ function saveGuide(exId, clear){
   ex.guide = "";
   save(); closeModal(); render();
 }
+/* ----- rest length: a shared setting (both phones), but each countdown runs on its own ----- */
+const REST_PRESETS=[30,45,60,90,120,150,180,240,300];
+function restSettings(){
+  const cur=S.restDefault||90;
+  const other=S.profiles.find(p=>p.id!==S.currentProfileId);
+  openModal(`<h3>Rest timer</h3>
+    <div class="muted" style="margin:-4px 0 14px">How long the timer runs after you tick a set.
+      Shared with ${escapeHtml(other?other.name:"your partner")} — but each of you counts down separately, so you can alternate sets.</div>
+    <div class="opts" style="margin-bottom:16px">
+      ${REST_PRESETS.map(s=>`<button class="opt ${s===cur?'on':''}" onclick="setRestDefault(${s})">${fmtClock(s)}</button>`).join("")}
+    </div>
+    <button class="btn" onclick="closeModal()">Done</button>`);
+}
+function setRestDefault(sec){
+  S.restDefault=safeRest(sec)||90; save();
+  if(rest.running) startRest(S.restDefault);   // apply immediately to a running countdown
+  restSettings(); render();
+}
 function rpeHelp(){
   openModal(`<h3>RPE — effort guide</h3>
     <div class="muted" style="margin:-4px 0 12px">RPE = how hard a set felt. After your last rep, ask: <b>how many more reps could I have done?</b> (that's "reps in reserve"). Log the matching number.</div>
@@ -1390,6 +1445,11 @@ function closeModal(){ if(modal){ modal.remove(); modal=null; } }
 function escapeHtml(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 document.getElementById("themeBtn").addEventListener("click",toggleTheme);
 
+// keep the two phones on the same build (stale cached HTML broke joint sync before)
+checkForUpdate();
+setInterval(checkForUpdate, 5*60*1000);
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden) checkForUpdate(); });
+
 // one-time cleanup of any legacy duplicate profiles
 if(dedupeProfiles()) save();
 
@@ -1401,7 +1461,7 @@ render();
 if(!S.active && !S.profilePicked){ openGate(); }
 
 // expose for inline handlers
-Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGate,enterAs,joinPartner,leaveTogether,startTogether,
+Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGate,enterAs,joinPartner,leaveTogether,startTogether,restSettings,setRestDefault,applyUpdate,checkForUpdate,
   newTemplate,saveTemplate,openTemplate,renameWorkout,removeTemplateExercise,deleteWorkout,
   startEmptyWorkout,startWorkout,openActive,openSession,addSet,removeSet,
   removeEntry,toggleDone,pickExercise,pickExerciseActive,pickExerciseForTemplate,onExType,pick,
