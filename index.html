@@ -136,6 +136,43 @@
   .delset{color:var(--muted);font-size:18px;width:24px}
   .addset{color:var(--accent);font-weight:700;font-size:14px;padding:9px;width:100%;
     background:var(--card2);border:1px dashed var(--line);border-radius:11px;margin-top:8px}
+  .cardfoot{display:flex;gap:8px;align-items:stretch}
+  .cardfoot .addset{flex:1}
+  .platebtn{color:var(--muted);font-weight:700;font-size:14px;padding:9px 12px;white-space:nowrap;
+    background:var(--card2);border:1px dashed var(--line);border-radius:11px;margin-top:8px}
+  .platebtn:active{background:var(--line)}
+
+  /* ===== Plate calculator ===== */
+  .pcbar{display:flex;align-items:center;justify-content:center;gap:3px;flex-wrap:wrap;
+    background:var(--card2);border:1px solid var(--line);border-radius:14px;padding:14px 10px;margin-bottom:12px}
+  .pcsleeve{width:16px;height:8px;border-radius:3px;background:var(--muted);opacity:.55}
+  .pcplate{display:inline-flex;align-items:center;justify-content:center;min-width:34px;
+    color:#fff;font-weight:800;font-size:13px;border-radius:5px;padding:0 6px}
+  .pcnone{color:var(--muted);font-weight:700;font-size:14px}
+  .pcline{text-align:center;font-weight:800;font-size:15px;margin:-4px 0 12px}
+  .pcline.warn{color:var(--warn)}
+  .pcsub{text-align:center;color:var(--muted);font-size:13px;font-weight:600;margin:-8px 0 14px;line-height:1.5}
+  .pcw{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .pcw input{flex:1;min-width:0;background:var(--card2);border:1px solid var(--line);color:var(--txt);
+    text-align:center;font-size:26px;font-weight:800;padding:12px 4px;border-radius:12px}
+  .pcw input:focus{outline:none;border-color:var(--accent)}
+  .pcw button{width:52px;height:52px;border-radius:12px;background:var(--card2);border:1px solid var(--line);
+    color:var(--txt);font-size:20px;font-weight:800;flex:none}
+  .pcw button:active{background:var(--line)}
+
+  /* ===== Supersets ===== */
+  .sswrap{border:1px solid rgba(47,123,255,.45);background:rgba(47,123,255,.05);
+    border-radius:18px;padding:8px;margin-bottom:12px}
+  .sswrap .card{margin-bottom:8px;box-shadow:none}
+  .sswrap .card:last-child{margin-bottom:0}
+  .sslabel{display:flex;align-items:center;gap:6px;color:var(--accent);font-size:11.5px;font-weight:800;
+    text-transform:uppercase;letter-spacing:.4px;padding:3px 7px 9px}
+  .sslabel .r{margin-left:auto;text-transform:none;letter-spacing:0;color:var(--muted);font-weight:600;font-size:11.5px}
+  .ssidx{display:inline-flex;align-items:center;justify-content:center;height:19px;padding:0 6px;
+    border-radius:6px;background:var(--accent);color:#fff;font-size:11px;font-weight:800;
+    margin-right:6px;vertical-align:2px}
+  .restnote{background:var(--accent);color:#fff;font-size:12.5px;font-weight:700;
+    border-radius:11px 11px 0 0;padding:6px 12px 10px;margin-bottom:-6px;opacity:.92}
 
   /* ===== Rest timer ===== */
   #rest{position:fixed;left:0;right:0;bottom:calc(64px + var(--safe-bot));z-index:60;display:none}
@@ -166,6 +203,18 @@
     animation:slideup .22s ease}
   @keyframes slideup{from{transform:translateY(100%)}}
   .sheet h3{margin:2px 0 14px;font-size:19px;font-weight:800}
+  /* hold-to-confirm: discarding a live session should never be one stray tap */
+  .holdbtn{position:relative;overflow:hidden;width:100%;padding:15px;border-radius:14px;
+    font-size:16px;font-weight:800;background:var(--card2);color:var(--bad);
+    border:1px solid #4a2730;-webkit-user-select:none;user-select:none;
+    -webkit-touch-callout:none;touch-action:manipulation}
+  .holdbtn .fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--bad);opacity:.9}
+  .holdbtn.arm .fill{width:100%;transition:width 1.1s linear}
+  .holdbtn .lbl{position:relative}
+  .holdbtn.arm .lbl{color:#fff}
+  .holdhint{text-align:center;color:var(--muted);font-size:12px;font-weight:700;margin-top:9px}
+  .quitlink{display:block;width:100%;margin-top:18px;padding:10px;background:transparent;
+    color:var(--muted);font-size:13px;font-weight:700;text-align:center}
   .field{margin-bottom:14px}
   .field label{display:block;color:var(--muted);font-size:12px;font-weight:700;text-transform:uppercase;
     letter-spacing:.4px;margin-bottom:7px}
@@ -227,7 +276,9 @@
   <div id="ver" style="text-align:center;color:var(--muted);font-size:11px;padding:8px 0 96px;line-height:1.6"></div>
 </div>
 
-<div id="rest"><div class="inner"><div class="restbar" id="restbar">
+<div id="rest"><div class="inner">
+  <div class="restnote" id="restNote" style="display:none"></div>
+  <div class="restbar" id="restbar">
   <div class="restctl">
     <button data-rest="-15">−15</button>
     <button data-rest="+15">+15</button>
@@ -278,7 +329,10 @@ function load(){
     workouts:[],      // templates: {id,name,exerciseIds:[]}
     sessions:[],      // completed: {id,workoutId,workoutName,profileId,startedAt,endedAt,durationSec,entries:[...]}
     active:null,      // {workoutId,profileId,startedAt,entries:[{exerciseId,sets:[{weight,reps,rpe,done}]}]}
-    restDefault:90
+    restDefault:90,
+    restSuperset:15,  // shorter rest between the exercises inside a superset (0 = none)
+    notifyRest:true, // device-only: banner when rest ends (needs notification permission)
+    lockAudio:true    // device-only: keep the countdown alive while the phone is locked
   };
 }
 function save(){ localStorage.setItem(STORE_KEY, JSON.stringify(S)); scheduleCloudPush(); }
@@ -293,7 +347,7 @@ function save(){ localStorage.setItem(STORE_KEY, JSON.stringify(S)); scheduleClo
 let applyingRemote=false, cloudTimer=null, lastSync="";
 function cloudOn(){ return !!(window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.apiKey); }
 function syncedState(){ return {profiles:S.profiles, exercises:S.exercises, workouts:S.workouts, sessions:S.sessions,
-  restDefault:S.restDefault}; }
+  restDefault:S.restDefault, restSuperset:S.restSuperset}; }
 function setSync(msg){ lastSync=msg; const s=document.getElementById("syncStat"); if(s) s.textContent=msg; }
 function scheduleCloudPush(){
   if(applyingRemote || !window.cloudPush) return;
@@ -324,13 +378,24 @@ function sanitizeCloud(r){
     profiles: arr(r.profiles).filter(p=>p&&safeId(p.id)).map(p=>({...p, color:safeColor(p.color)})),
     exercises: arr(r.exercises).filter(e=>e&&safeId(e.id)),
     workouts: arr(r.workouts).filter(w=>w&&safeId(w.id))
-      .map(w=>({...w, exerciseIds: arr(w.exerciseIds).filter(safeId)})),
+      .map(w=>({...w, exerciseIds: arr(w.exerciseIds).filter(safeId), ss: safeSsMap(w.ss)})),
     sessions: arr(r.sessions).filter(s=>s&&safeId(s.id))
-      .map(s=>({...s, entries: arr(s.entries).filter(en=>en&&safeId(en.exerciseId))})),
-    restDefault: safeRest(r.restDefault)
+      .map(s=>({...s, entries: arr(s.entries).filter(en=>en&&safeId(en.exerciseId))
+        .map(en=>({...en, ss: safeId(en.ss)}))})),
+    restDefault: safeRest(r.restDefault),
+    restSuperset: safeSsRest(r.restSuperset)
   };
 }
 function safeRest(v){ v=Number(v); return (isFinite(v)&&v>=15&&v<=600) ? Math.round(v/5)*5 : null; }
+function safeSsRest(v){ v=Number(v); return (isFinite(v)&&v>=0&&v<=300) ? Math.round(v/5)*5 : null; }
+// superset grouping travels as {exerciseId: groupId}; both halves are interpolated into
+// markup/handlers, so nothing that isn't a plain id survives ingest
+function safeSsMap(m){
+  if(!m || typeof m!=="object" || Array.isArray(m)) return null;
+  const o={};
+  Object.keys(m).forEach(k=>{ if(safeId(k) && safeId(m[k])) o[k]=m[k]; });
+  return Object.keys(o).length ? o : null;
+}
 // called by the Firebase module when remote data changes
 window.onCloudData=function(remote){
   if(!remote) return;
@@ -344,8 +409,10 @@ window.onCloudData=function(remote){
   S.exercises = mergeArrById(S.exercises, remote.exercises);
   S.workouts  = mergeArrById(S.workouts,  remote.workouts);
   S.sessions  = mergeArrById(S.sessions,  remote.sessions);
-  if(remote.restDefault!=null) S.restDefault=remote.restDefault;   // shared rest length
-  dedupeProfiles();  // collapse any duplicate profiles introduced by the merge
+  if(remote.restDefault!=null) S.restDefault=remote.restDefault;       // shared rest length
+  if(remote.restSuperset!=null) S.restSuperset=remote.restSuperset;    // …and superset rest
+  dedupeProfiles();   // collapse any duplicate profiles introduced by the merge
+  dedupeExercises();  // …and any same-lift-different-spelling exercises
   if(!S.profiles.some(p=>p.id===S.currentProfileId) && S.profiles[0]) S.currentProfileId=S.profiles[0].id;
   localStorage.setItem(STORE_KEY, JSON.stringify(S));
   applyingRemote=false;
@@ -382,6 +449,104 @@ function dedupeProfiles(){
   return true;
 }
 
+/* ---------- exercise identity ----------
+   "bench press", "Bench Press" and "Bench  Presses" are the SAME lift. Everything that
+   looks a name up goes through exKey() so the library never grows a second copy.
+   Equipment still separates lifts (Barbell vs Dumbbell bench are different), but the
+   default angle "None" and "Flat" are treated as the same bucket. */
+function exKey(name, equipment, angle){
+  const n=String(name||"").toLowerCase()
+    .replace(/[^a-z0-9\s]/g," ")            // punctuation/hyphens are noise
+    .replace(/\s+/g," ").trim()
+    .split(" ")
+    .map(w=>{                                // presses→press, flies→fly, curls→curl; press stays press
+      if(/(ss|x|z|ch|sh)es$/.test(w)) return w.slice(0,-2);
+      if(w.length>3 && /ies$/.test(w)) return w.slice(0,-3)+"y";
+      return (w.length>3 && /s$/.test(w) && !/(ss|us|is)$/.test(w)) ? w.slice(0,-1) : w;
+    })
+    .join("");                               // spaceless, so "pull-down" == "pulldown"
+  if(equipment===undefined) return n;
+  const a=(angle&&angle!=="None"&&angle!=="Flat")?angle:"Flat";
+  return `${n}|${equipment||"Other"}|${a}`;
+}
+// the exercise this name+equipment+angle already IS, if we have it
+function findExercise(name, equipment, angle){
+  const k=exKey(name, equipment, angle);
+  return S.exercises.find(e=>exKey(e.name,e.equipment,e.angle)===k) || null;
+}
+// existing spelling for a name we've seen before (any equipment), so casing stays consistent
+function canonicalExName(name){
+  const k=exKey(name);
+  const hit=S.exercises.find(e=>exKey(e.name)===k);
+  return hit ? hit.name : titleCaseName(name);
+}
+function titleCaseName(name){
+  const s=String(name||"");
+  // ALL CAPS across several words is caps lock, not an acronym — but a lone "RDL" is
+  const shouting = s===s.toUpperCase() && (s.match(/[A-Za-z]+/g)||[]).length>1;
+  return s.replace(/[A-Za-z][A-Za-z']*/g, w =>
+    (!shouting && w.length<=4 && w===w.toUpperCase()) ? w        // RDL, OHP, DB stay shouty
+      : w[0].toUpperCase()+w.slice(1).toLowerCase());
+}
+// how well-formed a name looks — used to pick which spelling survives a merge
+function nameScore(n){
+  const words=String(n||"").trim().split(/\s+/).filter(Boolean);
+  return words.filter(w=>/^[A-Z]/.test(w)).length;
+}
+/* Collapse library entries that are the same lift under different spellings, remapping
+   history, templates and the in-progress workout onto the survivor. Deterministic (same
+   winner on both phones) so synced devices converge instead of ping-ponging. */
+function dedupeExercises(){
+  const groups={};
+  S.exercises.forEach(e=>{ const k=exKey(e.name,e.equipment,e.angle); (groups[k]=groups[k]||[]).push(e); });
+  const remap={}, keep=[];
+  S.exercises.forEach(e=>{
+    const g=groups[exKey(e.name,e.equipment,e.angle)];
+    if(g.length<2){ keep.push(e); return; }
+    if(g.winner===undefined){
+      const sorted=g.slice().sort((a,b)=> (nameScore(b.name)-nameScore(a.name)) || String(a.id).localeCompare(String(b.id)));
+      g.winner=sorted[0];
+      if(!g.winner.goal){ const withGoal=sorted.find(x=>x.goal); if(withGoal) g.winner.goal=withGoal.goal; }
+      if(g.winner.assisted==null){ const w=sorted.find(x=>x.assisted!=null); if(w) g.winner.assisted=w.assisted; }
+      keep.push(g.winner);
+    }
+    if(e.id!==g.winner.id) remap[e.id]=g.winner.id;
+  });
+  if(!Object.keys(remap).length) return false;
+  S.exercises=keep;
+  const to=id=>remap[id]||id;
+  S.workouts.forEach(w=>{
+    const seen={};
+    w.exerciseIds=(w.exerciseIds||[]).map(to).filter(id=>seen[id]?false:(seen[id]=true));
+  });
+  S.sessions.forEach(s=>{
+    const byEx={}, out=[];
+    (s.entries||[]).forEach(en=>{
+      en.exerciseId=to(en.exerciseId);
+      const prev=byEx[en.exerciseId];
+      if(prev){ prev.sets=(prev.sets||[]).concat(en.sets||[]); }   // same lift logged twice → one entry
+      else { byEx[en.exerciseId]=en; out.push(en); }
+    });
+    s.entries=out;
+  });
+  if(S.active){
+    const byEx={}, out=[];
+    (S.active.entries||[]).forEach(en=>{
+      en.exerciseId=to(en.exerciseId);
+      const prev=byEx[en.exerciseId];
+      if(prev){ if(!entryHasData(prev) && entryHasData(en)) prev.sets=en.sets; }
+      else { byEx[en.exerciseId]=en; out.push(en); }
+    });
+    S.active.entries=out;
+    if(S.active.removed){
+      const t={};
+      Object.keys(S.active.removed).forEach(id=>{ const n=to(id); t[n]=Math.max(t[n]||0, S.active.removed[id]||0); });
+      S.active.removed=t;
+    }
+  }
+  return true;
+}
+
 function exDisplay(ex){
   if(!ex) return "Exercise";
   const a = (ex.angle && ex.angle!=="None") ? ex.angle+" " : "";
@@ -415,25 +580,61 @@ function lastSetsFor(profileId, exerciseId){
   return null;
 }
 
+/* ---------- assisted lifts ----------
+   On an assisted pull-up/dip machine (or with a band), the number you log is HELP, not load —
+   so less weight is progress, not regress. Everything that reads a weight for progression,
+   volume or PRs asks isAssisted() first. Auto-detected from the name; ex.assisted (true/false)
+   overrides that, so "Assisted Pull Up" works out of the box and anything odd can be flipped. */
+const ASSIST_RE=/\bassist(ed|ance)?\b|\bband(ed)?\s*assist/i;
+function looksAssisted(name){ return ASSIST_RE.test(String(name||"")); }
+function isAssisted(ex){
+  if(!ex) return false;
+  if(ex.assisted===true) return true;
+  if(ex.assisted===false) return false;
+  return looksAssisted(ex.name);
+}
+function isAssistedId(exId){ return isAssisted(exById(exId)); }
+
 /* ---------- progressive-overload recommendation (Nippard-style) ---------- */
 function roundTo(v,step){ return Math.round(v/step)*step; }
 // Jump scales with the load: ~2.5% upper / ~3.5% lower-body, rounded to 5 lb,
 // never less than the smallest practical plate jump. So 135→+5 but 1080→+40.
-function weightIncrement(ex, weight){
+function isLowerBody(ex){
   const n=((ex&&ex.name)||"").toLowerCase();
-  const lower=/squat|dead|leg press|lunge|hip thrust|rdl|romanian|hack|calf|leg curl|leg ext/.test(n);
+  return /squat|dead|leg press|lunge|hip thrust|rdl|romanian|hack|calf|leg curl|leg ext/.test(n);
+}
+function weightIncrement(ex, weight){
+  const lower = isLowerBody(ex);
   const base = lower ? 10 : 5;
   const pct  = lower ? 0.035 : 0.025;
   const prop = roundTo((Number(weight)||0)*pct, 5);
   return Math.max(base, prop);
 }
-function workingWeightOf(sets){
-  const ws=sets.map(s=>Number(s.weight)||0).filter(w=>w>0);
+// Within a session the ghosts RAMP: each working set is offered ~5% (upper) / ~7% (lower)
+// heavier than the one before it. Bigger than the between-session jump on purpose — this is
+// climbing a pyramid inside one exercise, not earning a new working weight.
+function rampIncrement(ex, weight){
+  const lower = isLowerBody(ex);
+  return Math.max(lower?10:5, roundTo((Number(weight)||0)*(lower?0.07:0.05), 5));
+}
+// Assistance comes OFF in stack-sized bites: ~10% of the help you're using, min 5 lb.
+// 100 lb of help → −10, 40 → −5, and it floors at 0 (a real, unassisted rep).
+function assistDecrement(weight){ return Math.max(5, roundTo((Number(weight)||0)*0.10, 5)); }
+// allowZero: on an assisted lift 0 is a legitimate working number (no help at all), so an
+// unassisted session must not read as "nothing logged" and reset you to the machine.
+function workingWeightOf(sets, allowZero){
+  const ws=sets.map(s=>(s.weight===""||s.weight==null)?null:(Number(s.weight)||0))
+               .filter(w=>w!=null && (allowZero ? w>=0 : w>0));
   if(!ws.length) return 0;
   const cnt={}; ws.forEach(w=>cnt[w]=(cnt[w]||0)+1);
   let best=ws[0], bc=0;
   Object.keys(cnt).forEach(w=>{ if(cnt[w]>bc || (cnt[w]===bc && +w>best)){ best=+w; bc=cnt[w]; } });
-  return best;
+  // Sets ramp within a session, so when every weight is distinct there is no mode to speak of
+  // and the BASE — the first set you logged — is the working weight. Taking the heaviest there
+  // would make next session start at today's top set and ramp again from it, compounding ~14%
+  // a week whether or not you earned it. A straight-set session repeats a weight, so it still
+  // resolves to the mode and is unaffected.
+  return bc>1 ? best : ws[0];
 }
 function warmupsFor(w, reps){
   if(!w || w<50) return [];
@@ -444,31 +645,48 @@ function recommend(pid, exId){
   const ex=exById(exId)||{}; const g=ex.goal||{};
   const repsLow = g.repsLow || g.repsHigh || 8;
   const repsHigh = g.repsHigh || g.repsLow || 12;
+  const assisted = isAssisted(ex);
   const last=lastSetsFor(pid, exId);
   if(last && last.length){
     const nSets = g.sets || last.length;
-    const wWeight = workingWeightOf(last);
-    const allHitTop = wWeight>0 && last.every(s=>(Number(s.reps)||0)>=repsHigh);
+    const wWeight = workingWeightOf(last, assisted);
+    const hasLoad = assisted ? true : wWeight>0;
+    const allHitTop = hasLoad && last.every(s=>(Number(s.reps)||0)>=repsHigh);
     const lastRpe = last[last.length-1] ? last[last.length-1].rpe : null;
     let working, note;
-    if(allHitTop){
+    if(allHitTop && assisted && wWeight<=0){
+      // already unassisted — there's no help left to take away, so keep earning reps
+      working=Array.from({length:nSets},()=>({w:0, r:repsHigh, rpe:g.rpe||null}));
+      note=`Full bodyweight, ${repsHigh} on every set. Nothing left to strip — add reps, or start adding load.`;
+    }else if(allHitTop && assisted){
+      const dec=assistDecrement(wWeight); const newW=Math.max(0, roundTo(wWeight-dec,5));
+      working=Array.from({length:nSets},()=>({w:newW, r:repsLow, rpe:g.rpe||null}));
+      note = newW===0
+        ? `Earned it — hit ${repsHigh} on every set. Drop the help entirely: <b>bodyweight × ${repsLow}</b>.`
+        : `Earned it — hit ${repsHigh} on every set. Cut assistance to <b>${newW} lb × ${repsLow}</b> (−${wWeight-newW}).`;
+    }else if(allHitTop){
       const inc=weightIncrement(ex, wWeight); const newW=roundTo(wWeight+inc,5);
       working=Array.from({length:nSets},()=>({w:newW, r:repsLow, rpe:g.rpe||null}));
       note=`Earned it — hit ${repsHigh} on every set. Go <b>${newW} lb × ${repsLow}</b> (+${inc}).`;
     }else{
       working=Array.from({length:nSets},(_,i)=>{
         const lr=last[i]?(Number(last[i].reps)||repsLow):repsLow;
-        return {w:(wWeight||""), r:Math.min(repsHigh,lr+1), rpe:g.rpe||null};
+        return {w:(assisted ? wWeight : (wWeight||"")), r:Math.min(repsHigh,lr+1), rpe:g.rpe||null};
       });
       const target=working.map(s=>s.r).join("/");
-      note=`Beat last time: <b>${wWeight?wWeight+" lb × ":""}${target}</b>${lastRpe?" (last RPE "+lastRpe+")":""}. Add weight once all sets reach ${repsHigh}.`;
+      const at = assisted ? (wWeight>0 ? wWeight+" lb help × " : "bodyweight × ") : (wWeight?wWeight+" lb × ":"");
+      const then = assisted ? `Cut assistance once all sets reach ${repsHigh}.` : `Add weight once all sets reach ${repsHigh}.`;
+      note=`Beat last time: <b>${at}${target}</b>${lastRpe?" (last RPE "+lastRpe+")":""}. ${then}`;
     }
     const todayW = (working[0] && working[0].w) ? working[0].w : wWeight;
-    return { working, warmups:warmupsFor(todayW,repsLow), note };
+    // assisted work is already the easy end of the movement — no ramp-up sets
+    return { working, warmups:(assisted?[]:warmupsFor(todayW,repsLow)), note };
   }
   const nSets=g.sets||3;
   return { working:Array.from({length:nSets},()=>({w:"", r:repsLow, rpe:g.rpe||null})), warmups:[],
-    note:`First time — aim <b>${repsLow===repsHigh?repsLow:repsLow+"–"+repsHigh} reps</b>, then we'll progress next time.` };
+    note: assisted
+      ? `First time — pick a help level you can do <b>${repsLow===repsHigh?repsLow:repsLow+"–"+repsHigh} reps</b> with, then we'll strip it off.`
+      : `First time — aim <b>${repsLow===repsHigh?repsLow:repsLow+"–"+repsHigh} reps</b>, then we'll progress next time.` };
 }
 function workoutLastDone(workoutId, profileId){
   for(let i=S.sessions.length-1;i>=0;i--){
@@ -479,7 +697,10 @@ function workoutLastDone(workoutId, profileId){
 }
 function sessionVolume(sess){
   let v=0;
-  sess.entries.forEach(en=>en.sets.forEach(st=>{ if(st.warmup) return; v += (Number(st.weight)||0)*(Number(st.reps)||0); }));
+  sess.entries.forEach(en=>{
+    if(isAssistedId(en.exerciseId)) return;   // that number is help, not load — counting it inverts the meaning
+    en.sets.forEach(st=>{ if(st.warmup) return; v += (Number(st.weight)||0)*(Number(st.reps)||0); });
+  });
   return Math.round(v);
 }
 
@@ -487,11 +708,29 @@ function sessionVolume(sess){
    Strength is compared with an estimated 1-rep max (Epley), so a heavier single and a
    lighter set of 10 are on the same scale. Warmups never count. */
 function e1rm(w,r){ w=Number(w)||0; r=Number(r)||0; if(w<=0||r<=0) return 0; return w*(1+r/30); }
-function bestSetIn(entry){
+/* Assisted lifts run the same Epley scale, but on what you LIFTED rather than what helped you:
+   a fixed reference minus the assistance. The constant only ever compares an exercise against
+   itself, so its exact value doesn't matter — only that less help always outranks more. */
+const ASSIST_REF=250;
+function assistScore(assist, r){
+  assist=Number(assist)||0; r=Number(r)||0;
+  if(r<=0) return 0;
+  return Math.max(5, ASSIST_REF-assist)*(1+r/30);
+}
+function bestSetIn(entry, assisted){
+  if(assisted===undefined) assisted=isAssistedId(entry&&entry.exerciseId);
   let best=null;
   (entry&&entry.sets||[]).forEach(s=>{ if(s.warmup) return;
-    const v=e1rm(s.weight,s.reps); if(v>0 && (!best||v>best.v)) best={v, weight:Number(s.weight)||0, reps:Number(s.reps)||0}; });
+    if(assisted && (s.weight===""||s.weight==null) && !s.done) return;   // never logged, not a 0-assist rep
+    const v = assisted ? assistScore(s.weight, s.reps) : e1rm(s.weight, s.reps);
+    if(v>0 && (!best||v>best.v)) best={v, weight:Number(s.weight)||0, reps:Number(s.reps)||0, assisted:!!assisted}; });
   return best;
+}
+// how a best-set reads on an assisted lift: the reps matter, and the help is the qualifier
+function setLabel(best){
+  if(!best) return "";
+  if(!best.assisted) return `${best.weight} × ${best.reps}`;
+  return best.weight>0 ? `${best.reps} reps @ ${best.weight} help` : `${best.reps} reps unassisted`;
 }
 // best effort for this profile+exercise, optionally only counting sessions before a timestamp
 function prFor(profileId, exerciseId, beforeTs){
@@ -624,12 +863,12 @@ function myPresence(){
   // the exercise list travels with presence (always published) so "Together" can start any time
   const ids=a.entries.map(e=>e.exerciseId).filter(safeId);
   const defs=ids.map(id=>exById(id)).filter(Boolean)
-    .map(e=>({id:e.id,name:e.name,equipment:e.equipment,angle:e.angle}));
+    .map(e=>({id:e.id,name:e.name,equipment:e.equipment,angle:e.angle,assisted:isAssisted(e)}));
   return { profileId:a.profileId, name:prof?prof.name:"", color:prof?prof.color:"#888", active:true,
     workoutId:a.workoutId||null, workoutName:(workoutById(a.workoutId)||{}).name||"Quick Workout", startedAt:a.startedAt,
     exercise:ex?exDisplay(ex):"", lastSet, setsDone, restEndsAt: rest.running?rest.endAt:null,
     joint: !!a.joint, listAt: a.listAt||a.startedAt, exerciseIds:ids, exercises:defs,
-    removed: a.removed||{},
+    removed: a.removed||{}, ss: ssMapOf(a.entries),   // supersets are part of the shared plan
     updatedAt:Date.now() };
 }
 function pushPresence(){ if(window.cloudPushPresence){ try{ window.cloudPushPresence(myPresence()); }catch(e){} } }
@@ -661,18 +900,25 @@ function applyPlan(){
   const tomb=S.active.removed=S.active.removed||{};
   applyingPlan=true;
   let changed=false;
-  // adopt exercise DEFINITIONS we don't have (so a brand-new lift resolves immediately)
+  // adopt exercise DEFINITIONS we don't have (so a brand-new lift resolves immediately).
+  // If it's a lift I already have under a different id — they typed "bench press", I have
+  // "Bench Press" — alias theirs to mine instead of forking the library.
+  const alias={};
   (src.exercises||[]).forEach(d=>{
-    if(d && safeId(d.id) && !exById(d.id)){
-      S.exercises.push({ id:d.id, name:String(d.name||"Exercise"),
-        equipment:String(d.equipment||"Other"), angle:String(d.angle||"None"), goal:null });
-      changed=true;
-    }
+    if(!(d && safeId(d.id)) || exById(d.id)) return;
+    const name=String(d.name||"Exercise"), equipment=String(d.equipment||"Other"), angle=String(d.angle||"None");
+    const mine=findExercise(name, equipment, angle);
+    if(mine){ alias[d.id]=mine.id; return; }
+    S.exercises.push({ id:d.id, name, equipment, angle, goal:null, assisted:!!d.assisted });
+    changed=true;
   });
+  const theirs=id=>alias[id]||id;
   // ADD anything of theirs I'm missing (seeded with MY OWN recommendations),
   // unless I removed it more recently than their last list change
-  (src.exerciseIds||[]).forEach(exId=>{
-    if(!safeId(exId) || !exById(exId)) return;
+  (src.exerciseIds||[]).forEach(rawId=>{
+    if(!safeId(rawId)) return;
+    const exId=theirs(rawId);
+    if(!exById(exId)) return;
     if(S.active.entries.some(en=>en.exerciseId===exId)) return;
     if(tomb[exId] && tomb[exId]>=theirAt) return;          // my removal is newer — stay removed
     S.active.entries.push({exerciseId:exId, sets:seedSets(exId), addedAt:Date.now()});
@@ -680,9 +926,10 @@ function applyPlan(){
     changed=true;
   });
   // apply THEIR removals, and carry their tombstones forward
-  Object.keys(theirRemoved).forEach(exId=>{
-    if(!safeId(exId)) return;
-    const ts=Number(theirRemoved[exId])||0;
+  Object.keys(theirRemoved).forEach(rawId=>{
+    if(!safeId(rawId)) return;
+    const exId=theirs(rawId);
+    const ts=Number(theirRemoved[rawId])||0;
     const i=S.active.entries.findIndex(en=>en.exerciseId===exId);
     if(i>=0){
       const en=S.active.entries[i];
@@ -691,6 +938,16 @@ function applyPlan(){
     }
     if(ts>(tomb[exId]||0)){ tomb[exId]=ts; changed=true; }
   });
+  // SUPERSETS ride the same "newest list wins" rule as the exercise list itself
+  const myAt=S.active.listAt||S.active.startedAt||0;
+  if(theirAt>myAt){
+    const theirSs=src.ss||{};
+    S.active.entries.forEach(en=>{
+      const g=theirSs[en.exerciseId]||null;
+      if((en.ss||null)!==g){ en.ss=g; changed=true; }
+    });
+  }
+  if(changed) ssNormalizeActive();   // keep every group adjacent no matter who changed what
   applyingPlan=false;
   if(changed){ save(); render(); pushPresence(); }
 }
@@ -707,6 +964,7 @@ window.onPresence=function(list){
       return {...p, color:safeColor(p.color),   // untrusted: validate before it reaches the DOM
         exerciseIds:(Array.isArray(p.exerciseIds)?p.exerciseIds:[]).filter(safeId),
         exercises:(Array.isArray(p.exercises)?p.exercises:[]).filter(d=>d&&safeId(d.id)),
+        ss:safeSsMap(p.ss)||{},
         removed:rem};
     });
   // if my partner switched Together on, join them automatically so it only takes one tap
@@ -802,8 +1060,10 @@ function viewWorkouts(){
       <div style="margin-top:6px">No templates yet.</div>
       <div class="sub" style="margin-top:4px">Make a reusable plan like "Push Day", or just start an empty workout and save it as a template at the end.</div></div>`;
   }else{
-    html += S.workouts.map(w=>{
-      const last=workoutLastDone(w.id, S.currentProfileId);
+    // most recently performed template first; never-done ones keep their order at the bottom
+    const byRecent = S.workouts.map((w,i)=>({w,i,last:workoutLastDone(w.id, S.currentProfileId)}))
+      .sort((a,b)=>(((b.last&&b.last.endedAt)||0)-((a.last&&a.last.endedAt)||0)) || (a.i-b.i));
+    html += byRecent.map(({w,last})=>{
       return `<div class="card tap" onclick="openTemplate('${w.id}')">
         <div class="row between">
           <div style="min-width:0">
@@ -818,6 +1078,161 @@ function viewWorkouts(){
   return html;
 }
 
+/* ============================================================
+   SUPERSETS — two or more exercises you alternate between, resting only after
+   the last one. Membership is a group id (`ss`) on the active entry / on the
+   template's `ss` map. Only ADJACENT members count as a group, so a stale id
+   from an older device can never make two far-apart exercises look linked;
+   ssNormalize() is what keeps members adjacent after any change.
+   ============================================================ */
+function ssRest(){ const v=S.restSuperset; return (v==null||!isFinite(v)) ? 15 : v; }
+// per-position info for a list of group ids: {gid,pos,size,letter,first,last} or null
+function ssRuns(gids){
+  const out=new Array(gids.length).fill(null);
+  let i=0, n=0;
+  while(i<gids.length){
+    const g=gids[i];
+    if(!g){ i++; continue; }
+    let j=i; while(j+1<gids.length && gids[j+1]===g) j++;
+    if(j>i){
+      const size=j-i+1, letter=String.fromCharCode(65+(n++));
+      for(let k=i;k<=j;k++) out[k]={gid:g, pos:k-i, size, letter, first:k===i, last:k===j};
+    }
+    i=j+1;
+  }
+  return out;
+}
+function activeRuns(){ return ssRuns((S.active?S.active.entries:[]).map(en=>en.ss||null)); }
+function ssMapOf(entries){ const m={}; (entries||[]).forEach(en=>{ if(en.ss && safeId(en.exerciseId)) m[en.exerciseId]=en.ss; }); return m; }
+function tplRuns(w){ return ssRuns((w.exerciseIds||[]).map(id=>(w.ss&&w.ss[id])||null)); }
+// pull every group's members together, and dissolve any group that's down to one exercise
+function ssNormalize(list, gidOf, clear){
+  const gids=[];
+  list.forEach(x=>{ const g=gidOf(x); if(g && gids.indexOf(g)<0) gids.push(g); });
+  gids.forEach(gid=>{
+    const members=list.filter(x=>gidOf(x)===gid);
+    if(members.length<2){ members.forEach(clear); return; }
+    const first=list.indexOf(members[0]);
+    members.slice(1).forEach(m=>list.splice(list.indexOf(m),1));
+    list.splice(first+1, 0, ...members.slice(1));
+  });
+}
+function ssNormalizeActive(){ if(S.active) ssNormalize(S.active.entries, en=>en.ss||null, en=>{ en.ss=null; }); }
+function ssNormalizeTpl(w){
+  if(!w.ss) return;
+  ssNormalize(w.exerciseIds, id=>w.ss[id]||null, id=>{ delete w.ss[id]; });
+  if(!Object.keys(w.ss).length) w.ss=null;
+}
+// shared bits of chrome so the active workout, a template and a past session all read alike
+function ssOpen(r){
+  if(!(r&&r.first)) return "";
+  return `<div class="sswrap"><div class="sslabel">🔗 Superset ${r.letter}
+    <span class="r">${r.size} exercises · rest after the last</span></div>`;
+}
+function ssClose(r){ return (r&&r.last) ? `</div>` : ""; }
+function ssBadge(r){ return r ? `<span class="ssidx">${r.letter}${r.pos+1}</span>` : ""; }
+
+/* ----- active workout: link / unlink ----- */
+function ssLink(ei, ti){
+  const a=S.active; if(!a) return;
+  const src=a.entries[ei], tgt=a.entries[ti];
+  if(!src || !tgt || src===tgt) return;
+  const gid = src.ss || uid();
+  src.ss=gid; tgt.ss=gid;
+  ssNormalizeActive();
+  save(); closeModal(); render(); markListChanged();
+}
+function ssUnlink(ei){
+  const a=S.active; if(!a) return;
+  const en=a.entries[ei]; if(!en || !en.ss) return;
+  const runs=activeRuns(); const r=runs[ei];
+  en.ss=null;
+  // park it just past its old group so the exercises left behind stay adjacent
+  if(r){
+    const last=ei-r.pos+r.size-1;
+    a.entries.splice(ei,1);
+    a.entries.splice(last, 0, en);
+  }
+  ssNormalizeActive();
+  save(); closeModal(); render(); markListChanged();
+}
+/* the "⋯" menu on an exercise in the active workout */
+function exerciseOpts(ei){
+  const a=S.active; if(!a) return;
+  const en=a.entries[ei]; if(!en) return;
+  const ex=exById(en.exerciseId);
+  const r=activeRuns()[ei];
+  const cands=a.entries.map((e,i)=>({e,i})).filter(o=>o.i!==ei && !o.e.ss);
+  const rs=ssRest();
+  openModal(`<h3>${escapeHtml(ex?ex.name:"Exercise")}</h3>
+    ${r?`<div class="muted" style="margin:-4px 0 12px">In <b>superset ${r.letter}</b> (${r.pos+1} of ${r.size}) —
+        ${rs>0?`${fmtClock(rs)} rest`:"no rest"} after this one, then the next exercise.</div>
+      <button class="btn sec" onclick="ssUnlink(${ei})">🔗 Leave superset ${r.letter}</button>
+      <div class="divider"></div>`:""}
+    <div class="field"><label>${r?"Add another exercise to "+r.letter:"Superset with"}</label>
+      ${cands.length
+        ? `<div class="liblist">${cands.map(o=>{
+            const ce=exById(o.e.exerciseId);
+            return `<div class="libitem" onclick="ssLink(${ei},${o.i})">
+              <div><div class="nm">${escapeHtml(ce?ce.name:"Exercise")}</div>
+                <div class="eq">${escapeHtml(ce?[(ce.angle&&ce.angle!=="None")?ce.angle:null,ce.equipment].filter(Boolean).join(" · "):"")}</div></div>
+              <div class="muted">🔗 link</div></div>`;
+          }).join("")}</div>
+           <div class="muted" style="font-size:12px;margin:-2px 2px 0">Alternate sets between them; the timer only
+             runs the full ${fmtClock(S.restDefault||90)} after the last exercise in the group.</div>`
+        : `<div class="muted">Add another (ungrouped) exercise to this workout first.</div>`}
+    </div>
+    <div class="divider"></div>
+    <button class="btn danger" onclick="removeEntry(${ei})">Remove exercise</button>`);
+}
+
+/* ----- templates: link / unlink (same rules, stored as a map on the template) ----- */
+function tplExOpts(wid, exId){
+  const w=workoutById(wid); if(!w) return;
+  const ex=exById(exId);
+  const i=w.exerciseIds.indexOf(exId);
+  const r=tplRuns(w)[i];
+  const cands=w.exerciseIds.filter(id=>id!==exId && !(w.ss&&w.ss[id]));
+  openModal(`<h3>${escapeHtml(ex?ex.name:"Exercise")}</h3>
+    ${r?`<div class="muted" style="margin:-4px 0 12px">In <b>superset ${r.letter}</b> (${r.pos+1} of ${r.size}).</div>
+      <button class="btn sec" onclick="ssUnlinkTpl('${wid}','${exId}')">🔗 Leave superset ${r.letter}</button>
+      <div class="divider"></div>`:""}
+    <div class="field"><label>${r?"Add another exercise to "+r.letter:"Superset with"}</label>
+      ${cands.length
+        ? `<div class="liblist">${cands.map(id=>{
+            const ce=exById(id);
+            return `<div class="libitem" onclick="ssLinkTpl('${wid}','${exId}','${id}')">
+              <div><div class="nm">${escapeHtml(ce?ce.name:"Exercise")}</div>
+                <div class="eq">${escapeHtml(ce?[(ce.angle&&ce.angle!=="None")?ce.angle:null,ce.equipment].filter(Boolean).join(" · "):"")}</div></div>
+              <div class="muted">🔗 link</div></div>`;
+          }).join("")}</div>`
+        : `<div class="muted">Add another (ungrouped) exercise to this template first.</div>`}
+    </div>
+    <div class="divider"></div>
+    <button class="btn danger" onclick="removeTemplateExercise('${wid}','${exId}')">Remove from template</button>`);
+}
+function ssLinkTpl(wid, exId, otherId){
+  const w=workoutById(wid); if(!w) return;
+  w.ss=w.ss||{};
+  const gid=w.ss[exId]||uid();
+  w.ss[exId]=gid; w.ss[otherId]=gid;
+  ssNormalizeTpl(w);
+  save(); closeModal(); render();
+}
+function ssUnlinkTpl(wid, exId){
+  const w=workoutById(wid); if(!w || !w.ss || !w.ss[exId]) return;
+  const i=w.exerciseIds.indexOf(exId);
+  const r=tplRuns(w)[i];
+  delete w.ss[exId];
+  if(r){
+    const last=i-r.pos+r.size-1;
+    w.exerciseIds.splice(i,1);
+    w.exerciseIds.splice(last, 0, exId);
+  }
+  ssNormalizeTpl(w);
+  save(); closeModal(); render();
+}
+
 /* ---------- Template detail / editor ---------- */
 function viewTemplate(id){
   const w=workoutById(id);
@@ -830,16 +1245,17 @@ function viewTemplate(id){
   if(w.exerciseIds.length===0){
     html+=`<div class="card" style="text-align:center;color:var(--muted)">No exercises yet — add the moves for this workout.</div>`;
   }else{
-    html+=w.exerciseIds.map(exId=>{
-      const e=exById(exId);
-      return `<div class="card"><div class="row between">
-        <div><div class="exname">${escapeHtml(e?e.name:"Exercise")}</div>
+    const runs=tplRuns(w);
+    html+=w.exerciseIds.map((exId,i)=>{
+      const e=exById(exId), r=runs[i];
+      return `${ssOpen(r)}<div class="card"><div class="row between">
+        <div><div class="exname">${ssBadge(r)}${escapeHtml(e?e.name:"Exercise")}</div>
           <div class="exsub">${escapeHtml(e?[(e.angle&&e.angle!=="None")?e.angle:null,e.equipment].filter(Boolean).join(" · "):"")}</div></div>
         <div class="row" style="gap:8px">
           <button class="howbtn" onclick="howTo('${exId}')">▶ How-to</button>
-          <button class="delset" style="font-size:20px" onclick="removeTemplateExercise('${id}','${exId}')">✕</button>
+          <button class="delset" style="font-size:20px" onclick="tplExOpts('${id}','${exId}')">⋯</button>
         </div>
-      </div>${guideBanner(e)}</div>`;
+      </div>${guideBanner(e)}</div>${ssClose(r)}`;
     }).join("");
   }
   html+=`<button class="btn sec" onclick="pickExerciseForTemplate('${id}')">+ Add Exercise</button>`;
@@ -864,30 +1280,34 @@ function viewActive(){
     html += `<div class="card" style="text-align:center;color:var(--muted)">No exercises yet — tap “Add Exercise” to start logging.</div>`;
   }
 
+  const runs=activeRuns();
   a.entries.forEach((en,ei)=>{
     const ex=exById(en.exerciseId);
     const prev=lastSetsFor(a.profileId, en.exerciseId);
     const rec=recommend(a.profileId, en.exerciseId);
-    html += `<div class="card">
+    const r=runs[ei];
+    html += `${ssOpen(r)}<div class="card">
       <div class="exhead">
-        <div><div class="exname">${escapeHtml(ex?ex.name:"Exercise")}</div>
-          <div class="exsub">${escapeHtml(ex?[(ex.angle&&ex.angle!=="None")?ex.angle:null, ex.equipment].filter(Boolean).join(" · "):"")}</div></div>
+        <div><div class="exname">${ssBadge(r)}${escapeHtml(ex?ex.name:"Exercise")}</div>
+          <div class="exsub">${escapeHtml(ex?[(ex.angle&&ex.angle!=="None")?ex.angle:null, ex.equipment, isAssisted(ex)?"assisted":null].filter(Boolean).join(" · "):"")}</div></div>
         <div class="row" style="gap:8px">
           <button class="howbtn" onclick="howTo('${en.exerciseId}')">▶ How-to</button>
-          <button class="delset" style="font-size:20px" onclick="removeEntry(${ei})">⋯</button>
+          <button class="delset" style="font-size:20px" onclick="exerciseOpts(${ei})">⋯</button>
         </div>
       </div>
       <table class="setgrid"><thead><tr>
-        <th class="setno">Set</th><th>Prev</th><th>${S.units.toUpperCase()}</th><th>Reps</th><th>RPE <span class="rpeq" onclick="rpeHelp()">?</span></th><th>✓</th><th></th>
+        <th class="setno">Set</th><th>Prev</th><th>${isAssisted(ex)?"ASSIST":S.units.toUpperCase()}</th><th>Reps</th><th>RPE <span class="rpeq" onclick="rpeHelp()">?</span></th><th>✓</th><th></th>
       </tr></thead><tbody>`;
     let wkNo=0, wkIdx=0;
+    const ghosts=ghostsFor(en);
     en.sets.forEach((st,si)=>{
       let label, p;
       if(st.warmup){ label="W"; p="—"; }
       else { wkNo++; label=String(wkNo); const pv=prev&&prev[wkIdx]; p = pv?`${pv.weight||0}×${pv.reps||0}`:"—"; wkIdx++; }
-      const phW = (st.recW!=null&&st.recW!=="")? st.recW : "";
-      const phR = (st.recR!=null&&st.recR!=="")? st.recR : "";
-      const phRpe = (st.recRPE!=null&&st.recRPE!=="")? st.recRPE : "–";
+      const gh=ghosts[si];
+      const phW = (gh.w!=null&&gh.w!=="")? gh.w : "";
+      const phR = (gh.r!=null&&gh.r!=="")? gh.r : "";
+      const phRpe = (gh.rpe!=null&&gh.rpe!=="")? gh.rpe : "–";
       html += `<tr class="${st.done?'done':''} ${st.warmup?'wu':''}">
         <td class="setno">${label}</td>
         <td class="prevcell">${p}</td>
@@ -903,19 +1323,24 @@ function viewActive(){
     const todayBest=bestSetIn(en);
     const beatIt = todayBest && (!pr || todayBest.v>pr.v+0.001);
     const prTxt = beatIt
-      ? `🏆 New PR — ${todayBest.weight} × ${todayBest.reps}${pr?` (beat ${pr.weight} × ${pr.reps})`:""}`
-      : (pr?`🏆 PR: ${pr.weight} × ${pr.reps}`:"");
+      ? `🏆 New PR — ${setLabel(todayBest)}${pr?` (beat ${setLabel(pr)})`:""}`
+      : (pr?`🏆 PR: ${setLabel(pr)}`:"");
     html += `</tbody></table>
       ${prTxt?`<div class="prline">${escapeHtml(prTxt)}</div>`:""}
       ${rec.note?`<div class="recnote"><span>↗</span><span>${rec.note}</span></div>`:""}
-      <button class="addset" onclick="addSet(${ei})">+ Add Set</button>
+      <div class="cardfoot">
+        <button class="addset" onclick="addSet(${ei})">+ Add Set</button>
+        <button class="platebtn" onclick="plateCalc(${ei})">Plates</button>
+      </div>
       ${guideBanner(ex)}
-    </div>`;
+    </div>${ssClose(r)}`;
   });
 
   html += `<button class="btn sec" onclick="pickExerciseActive()">+ Add Exercise</button>`;
-  html += `<button class="btn sec" style="margin-top:10px" onclick="restSettings()">⏱ Rest timer: ${fmtClock(S.restDefault||90)}</button>`;
-  html += `<button class="btn danger" style="margin-top:10px" onclick="cancelWorkout()">Cancel Workout</button>`;
+  html += `<button class="btn sec" style="margin-top:10px" onclick="restSettings()">⏱ Rest timer: ${fmtClock(S.restDefault||90)}${
+    runs.some(Boolean)?` · superset ${ssRest()>0?fmtClock(ssRest()):"none"}`:""}</button>`;
+  // a quiet text link, not a big red block — it's too easy to hit while scrolling
+  html += `<button class="quitlink" onclick="cancelWorkout()">Discard workout</button>`;
   return html;
 }
 
@@ -955,18 +1380,19 @@ function viewSessionDetail(id){
   let html=`<button class="btn ghost sm" style="width:auto;padding-left:0;margin-bottom:6px" onclick="route.view='list';route.id=null;render()">‹ History</button>`;
   html+=`<div class="h1" style="margin-bottom:4px">${escapeHtml(s.workoutName)}</div>`;
   html+=`<div class="sub" style="margin:0 2px 14px">${fmtDate(s.endedAt)}${s.startedAt?` · ${timeOf(s.startedAt)}–${timeOf(s.endedAt)}`:""} · ⏱ ${fmtDur(s.durationSec)} · ${sessionVolume(s).toLocaleString()} ${S.units}</div>`;
-  html+=s.entries.map(en=>{
-    const e=exById(en.exerciseId);
-    return `<div class="card">
+  const runs=ssRuns(s.entries.map(en=>en.ss||null));
+  html+=s.entries.map((en,i)=>{
+    const e=exById(en.exerciseId), r=runs[i];
+    return `${ssOpen(r)}<div class="card">
       <div class="row between"><div>
-        <div class="exname">${escapeHtml(entryName(en))}</div>
+        <div class="exname">${ssBadge(r)}${escapeHtml(entryName(en))}</div>
         <div class="exsub">${escapeHtml(e?e.equipment:"")}</div></div>
         ${e?`<button class="howbtn" onclick="howTo('${en.exerciseId}')">▶ How-to</button>`:""}
       </div>
       <table class="setgrid" style="margin-top:8px"><thead><tr>
         <th class="setno">Set</th><th>${S.units.toUpperCase()}</th><th>Reps</th><th>RPE</th></tr></thead><tbody>
         ${(function(){let n=0; return en.sets.map(st=>{const lbl=st.warmup?"W":String(++n); return `<tr class="${st.warmup?'wu':''}"><td class="setno">${lbl}</td><td>${st.weight||0}</td><td>${st.reps||0}</td><td>${st.rpe||"–"}</td></tr>`;}).join("");})()}
-      </tbody></table></div>`;
+      </tbody></table></div>${ssClose(r)}`;
   }).join("");
   html+=`<button class="btn danger" onclick="deleteSession('${s.id}')">Delete this session</button>`;
   return html;
@@ -1018,7 +1444,9 @@ function renameWorkout(id){
 }
 function removeTemplateExercise(id, exId){
   const w=workoutById(id); if(!w) return;
-  w.exerciseIds=w.exerciseIds.filter(x=>x!==exId); save(); render();
+  w.exerciseIds=w.exerciseIds.filter(x=>x!==exId);
+  if(w.ss){ delete w.ss[exId]; ssNormalizeTpl(w); }   // a superset of one isn't a superset
+  save(); closeModal(); render();
 }
 function deleteWorkout(id){
   if(S.active && S.active.workoutId===id){ alert("Finish or cancel the active workout first."); return; }
@@ -1029,20 +1457,34 @@ function deleteWorkout(id){
 
 /* ----- start / run a workout ----- */
 function startEmptyWorkout(){
-  if(S.active){ if(!confirm("A workout is already in progress. Discard it and start empty?")) return; S.active=null; }
+  if(S.active){
+    const n=loggedSetCount(S.active);
+    return confirmDiscard({
+      title:"A workout is already in progress",
+      body:`Starting an empty workout throws away the one in progress${n?` — <b>${n} logged set${n===1?"":"s"}</b>`:""}.`,
+      action:"Hold to discard & start empty"
+    }, ()=>{ S.active=null; startEmptyWorkout(); });
+  }
   S.active={ workoutId:null, profileId:S.currentProfileId, startedAt:Date.now(), entries:[] };
   save(); startSessionTimer();
   route.tab="workouts"; route.view="active"; render();
 }
 function startWorkout(id){
   if(S.active && S.active.workoutId!==id){
-    if(!confirm("Another workout is in progress. Discard it and start this one?")) return;
-    S.active=null;
+    const n=loggedSetCount(S.active);
+    const cur=workoutById(S.active.workoutId);
+    return confirmDiscard({
+      title:"Another workout is in progress",
+      body:`Starting this one throws away “${escapeHtml(cur?cur.name:"Quick Workout")}”${n?` and its <b>${n} logged set${n===1?"":"s"}</b>`:""}.`,
+      action:"Hold to discard & switch"
+    }, ()=>{ S.active=null; startWorkout(id); });
   }
   const w=workoutById(id);
   if(!S.active){
     S.active={ workoutId:id, profileId:S.currentProfileId, startedAt:Date.now(),
-      entries: w.exerciseIds.map(exId=>({ exerciseId:exId, sets: seedSets(exId) })) };
+      entries: w.exerciseIds.map(exId=>({ exerciseId:exId, sets: seedSets(exId),
+        ss: (w.ss&&w.ss[exId])||null })) };   // the template's supersets come along
+    ssNormalizeActive();
     save();
   }
   startSessionTimer();
@@ -1059,6 +1501,39 @@ function seedSets(exId){
   return sets;
 }
 
+/* Ghosts carry forward, climbing. Once you log a working set, every later untouched set
+   ghosts YOUR numbers rather than the pre-workout recommendation — same reps, one ramp step
+   heavier — so you type 145 × 10 once and tap ✓ down the rest of the column at 155, 165.
+   Each step is measured off the set before it, so overriding one set re-bases the rest.
+   Warmups have their own 50/70% ramp and neither carry nor climb.
+   Returns one {w,r,rpe} per set, in set order. */
+function ghostsFor(en){
+  const ex=exById(en&&en.exerciseId);
+  let cw=null, cr=null;   // carried from the last working set you filled in
+  return ((en&&en.sets)||[]).map(st=>{
+    if(st.warmup) return {w:st.recW, r:st.recR, rpe:st.recRPE};
+    const g={ w:(cw!=null?cw:st.recW), r:(cr!=null?cr:st.recR), rpe:st.recRPE };
+    const w=(st.weight!=null&&st.weight!=="")?st.weight:g.w;
+    const r=(st.reps!=null&&st.reps!=="")?st.reps:g.r;
+    if(w!=null && w!==""){
+      const nw=Number(w)||0;
+      cw = nw>0 ? roundTo(nw+rampIncrement(ex,nw),5) : w;   // bodyweight/0 carries flat
+    }
+    if(r!=null && r!=="") cr=r;
+    return g;
+  });
+}
+/* repaint the carried ghosts in place — typing must not re-render, or the keyboard drops */
+function refreshGhosts(ei){
+  const en=S.active&&S.active.entries[ei]; if(!en) return;
+  const g=ghostsFor(en);
+  document.querySelectorAll(`.inp[data-e="${ei}"]`).forEach(inp=>{
+    const gh=g[+inp.dataset.s]; if(!gh) return;
+    if(inp.dataset.f==="weight")    inp.placeholder=(gh.w!=null&&gh.w!=="")?gh.w:"";
+    else if(inp.dataset.f==="reps") inp.placeholder=(gh.r!=null&&gh.r!=="")?gh.r:"";
+  });
+}
+
 function addSet(ei){
   const sets=S.active.entries[ei].sets;
   const lastWk=[...sets].reverse().find(s=>!s.warmup) || sets[sets.length-1];
@@ -1072,19 +1547,34 @@ function removeEntry(ei){
   if(!confirm(`Remove ${ex?ex.name:'exercise'} from this workout?`)) return;
   const goneId=S.active.entries[ei].exerciseId;
   S.active.entries.splice(ei,1);
+  ssNormalizeActive();                   // its superset may now be down to one exercise
   S.active.removed=S.active.removed||{};
   S.active.removed[goneId]=Date.now();   // tombstone so the removal reaches your partner
-  save(); render();
+  save(); closeModal(); render();
   markListChanged();
 }
 function toggleDone(ei,si){
-  const st=S.active.entries[ei].sets[si];
+  const en=S.active.entries[ei];
+  const st=en.sets[si];
   st.done=!st.done;
   if(st.done){
-    // accept the grey recommendation if the user didn't type their own
-    if((st.weight===""||st.weight==null) && st.recW!=null && st.recW!=="") st.weight=st.recW;
-    if((st.reps===""||st.reps==null) && st.recR!=null && st.recR!=="") st.reps=st.recR;
-    startRest(S.restDefault);
+    // accept the grey ghost if the user didn't type their own — the CARRIED one,
+    // so ✓ commits what you did on the earlier sets, not the stale recommendation
+    const gh=ghostsFor(en)[si];
+    if((st.weight===""||st.weight==null) && gh.w!=null && gh.w!=="") st.weight=gh.w;
+    if((st.reps===""||st.reps==null) && gh.r!=null && gh.r!=="") st.reps=gh.r;
+    /* Superset: you're not resting yet — you're walking to the next exercise. Warmups
+       ramp on their own, so they always take the normal rest. */
+    const r = st.warmup ? null : activeRuns()[ei];
+    if(r && !r.last){
+      const nx=S.active.entries[ei+1], nex=nx?exById(nx.exerciseId):null;
+      restLabel = `🔗 Superset ${r.letter} — next: ${nex?nex.name:"next exercise"}`;
+      const s=ssRest();
+      if(s>0) startRest(s); else stopRest();
+    }else{
+      restLabel = "";
+      startRest(S.restDefault);
+    }
   }
   save(); render(); pushPresence();
 }
@@ -1097,6 +1587,7 @@ document.addEventListener("input",(e)=>{
     const st=S.active.entries[+ei].sets[+si];
     st[f]= t.value;
     save();
+    if(f!=="rpe") refreshGhosts(+ei);   // later sets follow what you just typed
   }
 });
 
@@ -1112,23 +1603,29 @@ function pickExercise(){
       <div class="opts" id="angleOpts">${ANGLES.map(a=>`<button class="opt ${a==='None'?'on':''}" onclick="pick(this,'angleOpts')" data-v="${a}">${a}</button>`).join("")}</div></div>
     <div class="field"><label>Equipment</label>
       <div class="opts" id="equipOpts">${EQUIPMENT.map(eq=>`<button class="opt ${eq==='Barbell'?'on':''}" onclick="pick(this,'equipOpts')" data-v="${eq}">${eq}</button>`).join("")}</div></div>
+    <div class="field"><label>Load</label>
+      <div class="opts" id="assistOpts">
+        <button class="opt on" onclick="pick(this,'assistOpts')" data-v="Standard">Standard</button>
+        <button class="opt" onclick="pick(this,'assistOpts')" data-v="Assisted">Assisted</button></div>
+      <div class="muted" style="margin:6px 2px 0;font-size:13px">Assisted = the number you log is help (machine or band). Less of it counts as progress.</div></div>
     <button class="btn" id="createBtn" onclick="createAndAddExercise()">+ Add exercise</button>`,true);
   setTimeout(()=>{ const i=document.getElementById("exname"); if(i){ i.focus(); } onExType(); },60);
 }
 function libRow(ex){
   return `<div class="libitem" onclick="addExistingExercise('${ex.id}')">
     <div><div class="nm">${escapeHtml(ex.name)}</div>
-    <div class="eq">${[(ex.angle&&ex.angle!=="None")?ex.angle:null,ex.equipment].filter(Boolean).join(" · ")}</div></div>
+    <div class="eq">${[(ex.angle&&ex.angle!=="None")?ex.angle:null,ex.equipment,isAssisted(ex)?"assisted":null].filter(Boolean).join(" · ")}</div></div>
     <div class="muted">＋ add</div></div>`;
 }
 // live type-ahead: show saved exercises that match as you type
 function onExType(){
   const input=document.getElementById("exname");
   const raw=(input?input.value:"").trim();
-  const q=raw.toLowerCase();
+  const q=raw.toLowerCase(), k=exKey(raw);
   const lib=S.exercises.slice().sort((a,b)=>a.name.localeCompare(b.name));
-  const matches=(q? lib.filter(e=>exDisplay(e).toLowerCase().includes(q)) : lib).slice(0,8);
-  const exact = q && lib.some(e=>e.name.toLowerCase()===q);
+  // match on the normalized key too, so "benchpress" / "bench presses" still find Bench Press
+  const matches=(q? lib.filter(e=>exDisplay(e).toLowerCase().includes(q) || exKey(e.name).includes(k)) : lib).slice(0,8);
+  const dupe = raw ? findExercise(raw, selected("equipOpts")||"Barbell", selected("angleOpts")||"None") : null;
   const sug=document.getElementById("suggest");
   if(sug){
     sug.innerHTML = matches.length
@@ -1136,10 +1633,22 @@ function onExType(){
           <div class="liblist">${matches.map(libRow).join("")}</div></div>`
       : (q?`<div class="muted" style="margin:-2px 2px 14px">No saved match — set angle &amp; equipment below, then add it as new.</div>`:"");
   }
+  // "Assisted Pull Up" pre-selects Assisted as you type — until you pick for yourself
+  const ao=document.getElementById("assistOpts");
+  if(ao && !ao.dataset.touched){
+    const want = looksAssisted(raw) ? "Assisted" : "Standard";
+    ao.querySelectorAll(".opt").forEach(o=>o.classList.toggle("on", o.dataset.v===want));
+  }
   const btn=document.getElementById("createBtn");
-  if(btn) btn.textContent = (q && !exact) ? `+ Add “${raw}” as new` : "+ Add exercise";
+  if(btn) btn.textContent = !raw ? "+ Add exercise"
+    : dupe ? `+ Add “${dupe.name}”`            // same lift, different spelling — reuse it
+           : `+ Add “${titleCaseName(raw)}” as new`;
 }
-function pick(btn,group){ document.querySelectorAll(`#${group} .opt`).forEach(o=>o.classList.remove("on")); btn.classList.add("on"); }
+function pick(btn,group){
+  document.querySelectorAll(`#${group} .opt`).forEach(o=>o.classList.remove("on")); btn.classList.add("on");
+  if(group==="assistOpts"){ const ao=document.getElementById("assistOpts"); if(ao) ao.dataset.touched="1"; }
+  if(document.getElementById("exname")) onExType();   // equipment/angle change can flip add↔reuse
+}
 function selected(group){ const el=document.querySelector(`#${group} .opt.on`); return el?el.dataset.v:null; }
 
 function addExistingExercise(exId){
@@ -1149,6 +1658,7 @@ function addExistingExercise(exId){
     save(); closeModal(); render(); return;
   }
   if(!S.active){ alert("Start a workout first."); return; }
+  if(S.active.entries.some(en=>en.exerciseId===exId)){ closeModal(); render(); return; }  // already in this session
   S.active.entries.push({exerciseId:exId, sets:seedSets(exId), addedAt:Date.now()});
   if(S.active.removed) delete S.active.removed[exId];   // re-adding clears my tombstone
   save(); closeModal(); render();
@@ -1157,7 +1667,12 @@ function addExistingExercise(exId){
 function createAndAddExercise(){
   const name=(document.getElementById("exname").value||"").trim();
   if(!name){ document.getElementById("exname").focus(); return; }
-  const ex={id:uid(),name,equipment:selected("equipOpts")||"Barbell",angle:selected("angleOpts")||"None",goal:null};
+  const equipment=selected("equipOpts")||"Barbell", angle=selected("angleOpts")||"None";
+  // "bench press" when Bench Press already exists → reuse it, don't fork the library
+  const existing=findExercise(name, equipment, angle);
+  if(existing){ addExistingExercise(existing.id); return; }
+  const ex={id:uid(),name:canonicalExName(name),equipment,angle,goal:null,
+            assisted: selected("assistOpts")==="Assisted"};
   S.exercises.push(ex);
   addExistingExercise(ex.id);
 }
@@ -1169,6 +1684,7 @@ function finishWorkout(){
   // keep only entries with at least one logged set (any weight or reps entered or marked done)
   const entries=a.entries.map(en=>({
     exerciseId:en.exerciseId,
+    ss:en.ss||null,                  // keep the superset grouping in History
     sets:en.sets.filter(s=>s.done || s.weight!=="" || s.reps!=="")
               .map(s=>{ const o={weight:num(s.weight),reps:num(s.reps),rpe:s.rpe===""?null:num(s.rpe)}; if(s.warmup) o.warmup=true; return o; })
   })).filter(en=>en.sets.length);
@@ -1191,10 +1707,13 @@ function finishWorkout(){
 let pendingTpl=null;
 function maybeOfferTemplate(sess, sourceId){
   const exIds=[...new Set(sess.entries.map(e=>e.exerciseId))];
-  pendingTpl={ exIds, sourceId, sessId:sess.id, name:sess.workoutName };
+  const ss={};
+  sess.entries.forEach(e=>{ if(e.ss) ss[e.exerciseId]=e.ss; });
+  pendingTpl={ exIds, ss, sourceId, sessId:sess.id, name:sess.workoutName };
   if(sourceId){
     const w=workoutById(sourceId);
-    const same = w && w.exerciseIds.length===exIds.length && exIds.every(id=>w.exerciseIds.includes(id));
+    const same = w && w.exerciseIds.length===exIds.length && exIds.every(id=>w.exerciseIds.includes(id))
+      && exIds.every(id=>(ss[id]||null)===((w.ss&&w.ss[id])||null));   // regrouping counts as a change
     if(same){ pendingTpl=null; gotoSession(sess.id); return; }   // unchanged template — nothing to ask
     openModal(`<h3>Save changes to template?</h3>
       <div class="muted" style="margin:-4px 0 14px">This workout's exercises differ from your “${escapeHtml(w?w.name:"template")}” template.</div>
@@ -1210,7 +1729,15 @@ function maybeOfferTemplate(sess, sourceId){
     setTimeout(()=>document.getElementById("tplname")?.focus(),60);
   }
 }
-function tplUpdate(){ const w=workoutById(pendingTpl.sourceId); if(w){ w.exerciseIds=pendingTpl.exIds.slice(); save(); } tplDone(); }
+function tplUpdate(){
+  const w=workoutById(pendingTpl.sourceId);
+  if(w){ w.exerciseIds=pendingTpl.exIds.slice(); w.ss=tplSsFromPending(); ssNormalizeTpl(w); save(); }
+  tplDone();
+}
+function tplSsFromPending(){
+  const ss=pendingTpl.ss||{};
+  return Object.keys(ss).length ? {...ss} : null;
+}
 function tplSaveNewPrompt(){
   openModal(`<h3>Name your template</h3>
     <div class="field"><label>Template name</label><input class="text" id="tplname" value="${escapeHtml(pendingTpl.name==="Quick Workout"?"":pendingTpl.name)}" placeholder="e.g. Push Day"></div>
@@ -1220,14 +1747,50 @@ function tplSaveNewPrompt(){
 function tplSaveNew(){
   const el=document.getElementById("tplname");
   const nm=((el?el.value:pendingTpl.name)||"Workout").trim()||"Workout";
-  S.workouts.push({ id:uid(), name:nm, exerciseIds:pendingTpl.exIds.slice() });
+  const w={ id:uid(), name:nm, exerciseIds:pendingTpl.exIds.slice(), ss:tplSsFromPending() };
+  S.workouts.push(w); ssNormalizeTpl(w);
   save(); tplDone();
 }
 function tplDismiss(){ tplDone(); }
 function tplDone(){ const sid=pendingTpl?pendingTpl.sessId:null; pendingTpl=null; closeModal(); gotoSession(sid); }
 function gotoSession(sid){ route.tab="history"; route.view= sid?"session":"list"; route.id=sid; render(); }
+/* Throwing away a live session is unrecoverable, and the button for it sits at the
+   bottom of a list you're scrolling with sweaty hands mid-set. So it takes a
+   deliberate press-and-hold, never a single tap on a native confirm(). */
+function loggedSetCount(a){
+  if(!a) return 0;
+  return a.entries.reduce((n,en)=>n+en.sets.filter(s=>s.done||s.weight!==""||s.reps!=="").length,0);
+}
+function confirmDiscard(opts, onYes){
+  const {title, body, action="Hold to discard"} = opts;
+  openModal(`<h3>${escapeHtml(title)}</h3>
+    <div class="muted" style="margin:-4px 0 16px">${body}</div>
+    <button class="holdbtn" id="holdBtn"><span class="fill"></span><span class="lbl">${escapeHtml(action)}</span></button>
+    <div class="holdhint">Press and hold for a second</div>
+    <button class="btn sec" style="margin-top:12px" onclick="closeModal()">Keep workout</button>`);
+  const b=document.getElementById("holdBtn"); if(!b) return;
+  let t=null;
+  const stop=()=>{ if(t){ clearTimeout(t); t=null; } b.classList.remove("arm"); };
+  const start=(e)=>{
+    e.preventDefault();
+    if(t) return;
+    b.classList.add("arm");
+    t=setTimeout(()=>{ t=null; if(navigator.vibrate) navigator.vibrate(30); closeModal(); onYes(); }, 1100);
+  };
+  b.addEventListener("pointerdown",start);
+  ["pointerup","pointercancel","pointerleave"].forEach(ev=>b.addEventListener(ev,stop));
+}
 function cancelWorkout(silent){
-  if(!silent && !confirm("Discard this workout? Nothing will be saved.")) return;
+  const a=S.active;
+  if(!silent){
+    const n=loggedSetCount(a);
+    return confirmDiscard({
+      title:"Discard this workout?",
+      body: n ? `<b>${n} logged set${n===1?"":"s"}</b> will be thrown away. Nothing is saved to History.`
+              : "Nothing will be saved to History.",
+      action:"Hold to discard"
+    }, ()=>cancelWorkout(true));
+  }
   const wasJoint = S.active && S.active.joint;
   S.active=null; stopSessionTimer(); stopRest(); save();
   if(wasJoint) endPlan();
@@ -1303,6 +1866,11 @@ function editGuide(exId){
     <div class="gline"><span class="lbl">Sets</span>${stepper("gsets",g.sets,0,99,1)}</div>
     <div class="gline"><span class="lbl">Reps</span>${stepper("grmin",g.repsLow,0,99,1)}<span class="rangeto">to</span>${stepper("grmax",g.repsHigh,0,99,1)}</div>
     <div class="gline"><span class="lbl">Target RPE</span>${stepper("grpe",g.rpe,1,10,0.5)}</div>
+    <div class="field" style="margin-top:14px"><label>Load</label>
+      <div class="opts" id="assistOpts">
+        <button class="opt ${isAssisted(ex)?"":"on"}" onclick="pick(this,'assistOpts')" data-v="Standard">Standard</button>
+        <button class="opt ${isAssisted(ex)?"on":""}" onclick="pick(this,'assistOpts')" data-v="Assisted">Assisted</button></div>
+      <div class="muted" style="margin:6px 2px 0;font-size:13px">Assisted = the number you log is help (machine or band), so the plan takes it <b>off</b> as you get stronger.</div></div>
     <div class="field"><label>Notes (optional)</label>
       <textarea class="text" id="gnotes" placeholder="e.g. pause at chest, controlled tempo">${escapeHtml((g.notes)||ex.guide||"")}</textarea></div>
     <button class="btn" onclick="saveGuide('${exId}')">Save goal</button>
@@ -1310,6 +1878,9 @@ function editGuide(exId){
 }
 function saveGuide(exId, clear){
   const ex=exById(exId); if(!ex) return;
+  // load type belongs to the exercise, not the goal — it survives "Clear goal"
+  const sel=selected("assistOpts");
+  if(sel) ex.assisted = (sel==="Assisted");
   if(clear){ ex.goal=null; ex.guide=""; save(); closeModal(); render(); return; }
   const gv=id=>{ const el=document.getElementById(id); if(!el||el.value==="") return null; const v=parseFloat(el.value); return isNaN(v)?null:v; };
   const notes=(document.getElementById("gnotes").value||"").trim();
@@ -1321,20 +1892,54 @@ function saveGuide(exId, clear){
 }
 /* ----- rest length: a shared setting (both phones), but each countdown runs on its own ----- */
 const REST_PRESETS=[30,45,60,90,120,150,180,240,300];
+const SS_PRESETS=[0,10,15,20,30,45,60];   // the walk between superset exercises
 function restSettings(){
   const cur=S.restDefault||90;
   const other=S.profiles.find(p=>p.id!==S.currentProfileId);
+  const perm=notifyPerm();
+  const notifOK = perm==="granted" && notifyOn();
+  const notifLbl = perm==="granted" ? (notifyOn()?"Notification on":"Notification off")
+                 : perm==="denied"  ? "Notifications blocked"
+                 : perm==="unsupported" ? "No notifications" : "Turn on notifications";
+  const notifHint = perm==="granted"
+      ? "A banner fires when the timer hits zero — visible on the lock screen. Tap it to jump back in."
+    : perm==="denied"
+      ? "iOS is blocking these. Settings → Notifications → H+A Workouts to allow them."
+    : perm==="unsupported"
+      ? "This browser can't do notifications. Add the app to your Home Screen (iOS 16.4+) to get them."
+      : "Tap to allow a banner when the timer hits zero — it shows on the lock screen.";
   openModal(`<h3>Rest timer</h3>
     <div class="muted" style="margin:-4px 0 14px">How long the timer runs after you tick a set.
       Shared with ${escapeHtml(other?other.name:"your partner")} — but each of you counts down separately, so you can alternate sets.</div>
-    <div class="opts" style="margin-bottom:16px">
+    <div class="opts" style="margin-bottom:18px">
       ${REST_PRESETS.map(s=>`<button class="opt ${s===cur?'on':''}" onclick="setRestDefault(${s})">${fmtClock(s)}</button>`).join("")}
     </div>
+    <div style="font-weight:800;margin-bottom:8px">Between superset exercises</div>
+    <div class="opts" style="margin-bottom:8px">
+      ${SS_PRESETS.map(s=>`<button class="opt ${s===ssRest()?'on':''}" onclick="setRestSuperset(${s})">${s===0?"None":fmtClock(s)}</button>`).join("")}
+    </div>
+    <div class="muted" style="font-size:12px;margin-bottom:18px">Inside a superset you go almost straight
+      to the next exercise — this is the short gap in between. The full ${fmtClock(cur)} runs only after the
+      last exercise in the group.</div>
+    <div style="font-weight:800;margin-bottom:8px">When rest ends</div>
+    <div class="opts" style="margin-bottom:8px">
+      <button class="opt ${notifOK?'on':''}" onclick="toggleNotify()">🔔 ${notifLbl}</button>
+      <button class="opt ${lockAudioOn()?'on':''}" onclick="toggleLockAudio()">🔒 Run while locked</button>
+    </div>
+    <div class="muted" style="font-size:12px;margin-bottom:16px">
+      ${notifHint}<br>
+      <b>Run while locked</b> plays a silent track so iOS doesn't freeze the countdown when your
+      phone locks — you also get the timer on the lock screen (⏭ ±15s, ⏸ skip). It takes over the
+      Now Playing slot, so music from other apps pauses.</div>
     <button class="btn" onclick="closeModal()">Done</button>`);
 }
 function setRestDefault(sec){
   S.restDefault=safeRest(sec)||90; save();
   if(rest.running) startRest(S.restDefault);   // apply immediately to a running countdown
+  restSettings(); render();
+}
+function setRestSuperset(sec){
+  const v=safeSsRest(sec); S.restSuperset = (v==null)?15:v; save();
   restSettings(); render();
 }
 function rpeHelp(){
@@ -1368,7 +1973,9 @@ function tickSession(){
   if(rd) rd.textContent="In progress · "+fmtDur((Date.now()-S.active.startedAt)/1000);
 }
 
-let rest={running:false,endAt:0,timer:null};
+let rest={running:false,endAt:0,startAt:0,timer:null};
+// set by toggleDone when the countdown is a superset hand-off ("next: Cable Row")
+let restLabel="";
 // iOS only allows audio that's unlocked by a user gesture. The rest beep fires from a
 // timer, so prime/resume the AudioContext here (startRest runs from the ✓ tap).
 function unlockAudio(){
@@ -1380,27 +1987,49 @@ function unlockAudio(){
 function startRest(sec){
   stopRest();
   unlockAudio();
-  rest.running=true; rest.endAt=Date.now()+sec*1000;
+  rest.running=true; rest.startAt=Date.now(); rest.endAt=rest.startAt+sec*1000;
   rest.timer=setInterval(tickRest,250);
+  startKeepAlive();          // silent track so a locked phone keeps counting
   renderRest(); tickRest(); pushPresence();
 }
 function adjustRest(delta){
-  if(!rest.running){ startRest(Math.max(15,S.restDefault+delta)); return; }
+  if(!rest.running){ restLabel=""; startRest(Math.max(15,S.restDefault+delta)); return; }
   rest.endAt+=delta*1000;
-  if(rest.endAt<=Date.now()) stopRest();
+  if(rest.endAt<=Date.now()){ stopRest(); return; }
   tickRest();
 }
-function stopRest(){ rest.running=false; if(rest.timer)clearInterval(rest.timer); rest.timer=null; renderRest(); pushPresence(); }
+function stopRest(){
+  rest.running=false; if(rest.timer)clearInterval(rest.timer); rest.timer=null;
+  stopKeepAlive(); renderRest(); pushPresence();
+}
 function tickRest(){
   const left=Math.round((rest.endAt-Date.now())/1000);
   const bar=document.getElementById("restbar"), t=document.getElementById("restTime");
-  if(left<=0){ if(t)t.textContent="0:00"; if(bar)bar.classList.add("ring"); ding(); stopRest(); return; }
+  if(left<=0){
+    if(t)t.textContent="0:00"; if(bar)bar.classList.add("ring");
+    restDone();              // alarm + lock-screen notification, before we tear the timer down
+    stopRest();
+    return;
+  }
   if(t) t.textContent=fmtClock(left);
+  nowPlaying(left, Math.max(1,Math.round((rest.endAt-rest.startAt)/1000)));
+}
+// rest is over: make noise (audible from a locked screen) and post a banner
+function restDone(){
+  const played = playAlarm();
+  if(!played) ding();        // no media element available — fall back to the WebAudio beeps
+  else if(navigator.vibrate) navigator.vibrate([180,90,180]);
+  notifyRestDone();
 }
 function renderRest(){
   const wrap=document.getElementById("rest");
   const show = rest.running && route.view==="active";
   wrap.style.display = show?"block":"none";
+  const note=document.getElementById("restNote");
+  if(note){
+    note.style.display = (show && restLabel) ? "block" : "none";
+    if(show && restLabel) note.textContent=restLabel;
+  }
   if(show){ document.getElementById("restbar").classList.remove("ring"); }
 }
 function ding(){
@@ -1419,6 +2048,203 @@ function ding(){
     });
   }catch(e){}
 }
+
+/* ============================================================
+   LOCK SCREEN — an iOS Home-Screen app is suspended the moment the phone
+   locks or you switch apps, which used to kill the countdown mid-rest: no
+   beep, and a stale clock when you came back. Three parts:
+
+   1. a silent looping track keeps the app running while locked (this is the
+      only way to do it without a push server), so the timer stays honest;
+   2. that track also gives us the lock-screen Now Playing card — the live
+      countdown, with the transport buttons wired to ±15s / skip;
+   3. when rest ends we play a real alarm through the same element (audible
+      over the lock screen) and post a notification banner.
+
+   Cost: holding the audio session pauses music from other apps, so it's a
+   toggle in the rest-timer sheet, not a silent default.
+   ============================================================ */
+let restAudio=null, audioMode=null, npSec=-1, npWired=false, swReg=null, wavCache={};
+
+function lockAudioOn(){ return S.lockAudio!==false; }
+function notifyOn(){ return S.notifyRest!==false; }
+
+// build a WAV data URI from samples — small enough to make at runtime, and it
+// avoids shipping binary assets (or another file for the SW to worry about)
+function wavURI(samples, rate){
+  const n=samples.length, buf=new ArrayBuffer(44+n*2), v=new DataView(buf);
+  const str=(off,s)=>{ for(let i=0;i<s.length;i++) v.setUint8(off+i,s.charCodeAt(i)); };
+  str(0,"RIFF"); v.setUint32(4,36+n*2,true); str(8,"WAVE"); str(12,"fmt ");
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,rate,true); v.setUint32(28,rate*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+  str(36,"data"); v.setUint32(40,n*2,true);
+  for(let i=0;i<n;i++){ const s=Math.max(-1,Math.min(1,samples[i])); v.setInt16(44+i*2, s<0?s*0x8000:s*0x7fff, true); }
+  const b=new Uint8Array(buf); let bin="";
+  for(let i=0;i<b.length;i+=8192) bin+=String.fromCharCode.apply(null,b.subarray(i,i+8192));
+  return "data:audio/wav;base64,"+btoa(bin);
+}
+// a hair above digital silence: dead-silent buffers can get dropped by iOS
+function silentWAV(){
+  if(wavCache.silent) return wavCache.silent;
+  const rate=8000, n=rate, s=new Float32Array(n);
+  for(let i=0;i<n;i++) s[i]=Math.sin(2*Math.PI*50*i/rate)*0.0002;
+  return (wavCache.silent=wavURI(s,rate));
+}
+// same three-beep motif as ding(), but as a file so it can play from the lock screen
+function alarmWAV(){
+  if(wavCache.alarm) return wavCache.alarm;
+  const rate=11025, dur=2.6, n=Math.round(rate*dur), s=new Float32Array(n);
+  const beeps=[[0,780],[0.18,780],[0.36,1040],[0.9,780],[1.08,780],[1.26,1040]];
+  beeps.forEach(([at,hz])=>{
+    const start=Math.round(at*rate), len=Math.round(0.15*rate);
+    for(let i=0;i<len && start+i<n;i++){
+      const env=Math.min(1,i/(rate*0.01))*Math.pow(1-i/len,1.5);
+      s[start+i]+=Math.sin(2*Math.PI*hz*i/rate)*0.55*env;
+    }
+  });
+  return (wavCache.alarm=wavURI(s,rate));
+}
+function ensureRestAudio(){
+  if(restAudio) return restAudio;
+  restAudio=document.createElement("audio");
+  restAudio.setAttribute("playsinline","");
+  restAudio.preload="auto";
+  restAudio.addEventListener("ended",()=>{ if(audioMode==="alarm"){ audioMode=null; clearNowPlaying(); } });
+  document.body.appendChild(restAudio);
+  return restAudio;
+}
+function playSrc(src, loop){
+  try{
+    const a=ensureRestAudio();
+    a.loop=!!loop; a.volume=1;
+    // only rewind when reusing the same source — currentTime throws on a fresh, unloaded src
+    if(a.src!==src) a.src=src;
+    else { try{ a.currentTime=0; }catch(e){} }
+    const p=a.play(); if(p&&p.catch) p.catch(()=>{});
+    return true;
+  }catch(e){ return false; }
+}
+function startKeepAlive(){
+  if(!lockAudioOn()) return;
+  audioMode="silent";
+  playSrc(silentWAV(), true);
+  wireNowPlaying();
+}
+function stopKeepAlive(){
+  if(audioMode==="alarm") return;       // let a firing alarm finish
+  audioMode=null;
+  try{ if(restAudio){ restAudio.pause(); } }catch(e){}
+  clearNowPlaying();
+}
+function playAlarm(){
+  // startRest unlocked this element from a tap, so it can still play once we're backgrounded
+  if(!restAudio && !lockAudioOn()) return false;
+  audioMode="alarm";
+  const ok=playSrc(alarmWAV(), false);
+  if(ok) nowPlayingText("Rest over 💪", "Next set");
+  else audioMode=null;
+  return ok;
+}
+
+/* ---- lock-screen Now Playing card ---- */
+function npArt(){
+  if(wavCache.art) return wavCache.art;
+  try{
+    const c=document.createElement("canvas"); c.width=c.height=512;
+    const x=c.getContext("2d");
+    x.fillStyle="#0e0f13"; x.fillRect(0,0,512,512);
+    x.fillStyle="#2f7bff"; x.fillRect(80,224,352,64);
+    x.fillStyle="#f2f4f8"; x.fillRect(58,181,59,150); x.fillRect(395,181,59,150);
+    return (wavCache.art=c.toDataURL("image/png"));
+  }catch(e){ return (wavCache.art=""); }
+}
+function curExName(){
+  try{
+    if(!S.active) return curProfile().name;
+    const en=S.active.entries[S.active.entries.length-1];
+    const ex=en&&exById(en.exerciseId);
+    return ex?exDisplay(ex):curProfile().name;
+  }catch(e){ return "Workout"; }
+}
+function nowPlayingText(title, sub){
+  if(!("mediaSession" in navigator)) return;
+  try{
+    const art=npArt();
+    navigator.mediaSession.metadata=new MediaMetadata({
+      title, artist:sub||curExName(), album:"H+A Workouts",
+      artwork: art?[{src:art,sizes:"512x512",type:"image/png"}]:[]
+    });
+    navigator.mediaSession.playbackState="playing";
+  }catch(e){}
+}
+function nowPlaying(left, total){
+  if(!("mediaSession" in navigator) || audioMode!=="silent") return;
+  if(left===npSec) return;               // metadata churns the card — once per second is plenty
+  npSec=left;
+  nowPlayingText("Rest — "+fmtClock(left));
+  try{
+    navigator.mediaSession.setPositionState({
+      duration: total, position: Math.min(total, Math.max(0, total-left)), playbackRate: 1
+    });
+  }catch(e){}
+}
+function clearNowPlaying(){
+  npSec=-1;
+  if(!("mediaSession" in navigator)) return;
+  try{ navigator.mediaSession.playbackState="none"; navigator.mediaSession.metadata=null; }catch(e){}
+}
+// lock-screen transport: play/pause = skip the rest, track skip = ±15s
+function wireNowPlaying(){
+  if(npWired || !("mediaSession" in navigator)) return;
+  npWired=true;
+  const set=(k,fn)=>{ try{ navigator.mediaSession.setActionHandler(k,fn); }catch(e){} };
+  set("pause",()=>stopRest());
+  set("stop",()=>stopRest());
+  set("play",()=>{ if(rest.running) startKeepAlive(); });
+  set("nexttrack",()=>adjustRest(15));
+  set("previoustrack",()=>adjustRest(-15));
+}
+
+/* ---- notifications ---- */
+async function initNotify(){
+  if(!("serviceWorker" in navigator)) return null;
+  try{ swReg = await navigator.serviceWorker.register("sw.js"); }catch(e){ swReg=null; }
+  return swReg;
+}
+function notifyPerm(){ return ("Notification" in window) ? Notification.permission : "unsupported"; }
+function notifyRestDone(){
+  if(!notifyOn() || notifyPerm()!=="granted" || !swReg) return;
+  try{
+    swReg.showNotification("Rest over 💪", {
+      body: curExName()+" — time for your next set.",
+      tag:"rest-done", renotify:true, silent:false,
+      vibrate:[180,90,180], data:{ at:Date.now() }
+    });
+  }catch(e){}
+}
+function clearRestNotifications(){
+  if(!swReg || !swReg.getNotifications) return;
+  swReg.getNotifications({tag:"rest-done"}).then(ns=>ns.forEach(n=>n.close())).catch(()=>{});
+}
+async function toggleNotify(){
+  const perm=notifyPerm();
+  if(perm==="unsupported" || !("serviceWorker" in navigator)){
+    S.notifyRest=false; save(); restSettings(); return;
+  }
+  if(perm==="granted"){ S.notifyRest=!notifyOn(); save(); restSettings(); return; }
+  if(perm==="denied"){ restSettings(); return; }   // only iOS Settings can undo this
+  try{
+    const res=await Notification.requestPermission();   // this call needs the tap that got us here
+    if(res==="granted"){ S.notifyRest=true; save(); await initNotify(); }
+  }catch(e){}
+  restSettings();
+}
+function toggleLockAudio(){
+  S.lockAudio=!lockAudioOn(); save();
+  if(rest.running){ if(lockAudioOn()) startKeepAlive(); else stopKeepAlive(); }
+  restSettings();
+}
+
 // rest bar buttons
 document.getElementById("restbar").addEventListener("click",(e)=>{
   const v=e.target.getAttribute("data-rest"); if(!v) return;
@@ -1426,6 +2252,115 @@ document.getElementById("restbar").addEventListener("click",(e)=>{
   else if(v==="-15") adjustRest(-15);
   else if(v==="+15") adjustRest(15);
 });
+
+/* ============================================================
+   PLATE CALCULATOR — what to hang on each side of the bar.
+   Plates are unlimited (commercial-gym assumption); we load biggest-first,
+   the way you actually load a bar. Every plate is a multiple of the smallest,
+   so any loadable weight resolves exactly; loadable steps by 2× the smallest.
+   ============================================================ */
+const PLATE_KIT = {
+  lb:{ bars:[45,35,25,15,0],
+       plates:[{w:45,c:"#2f7bff"},{w:35,c:"#ffb020"},{w:25,c:"#27c281"},
+               {w:10,c:"#a16bff"},{w:5,c:"#ff6b9d"},{w:2.5,c:"#8b93a5"}] },
+  kg:{ bars:[20,15,10,7.5,0],
+       plates:[{w:25,c:"#e5484d"},{w:20,c:"#2f7bff"},{w:15,c:"#ffb020"},
+               {w:10,c:"#27c281"},{w:5,c:"#a16bff"},{w:2.5,c:"#ff6b9d"},{w:1.25,c:"#8b93a5"}] }
+};
+const PLATE_H=[54,48,43,38,33,28,24];   // visual height per plate size, biggest first
+let pcalc={weight:null, bar:45};
+
+function plateKit(){ return PLATE_KIT[S.units==="kg"?"kg":"lb"]; }
+function plateStep(){ const p=plateKit().plates; return p[p.length-1].w*2; }
+function barDefault(){ const bars=plateKit().bars; return bars.includes(S.barWeight)?S.barWeight:bars[0]; }
+function tidy(n){ return Math.round(n*100)/100; }
+
+/* what's already on the bar for this exercise: your last typed working weight,
+   else the recommendation the grey ghost is showing you */
+function plateSeed(ei){
+  const en=S.active&&S.active.entries[ei]; if(!en) return null;
+  const ghosts=ghostsFor(en);
+  let last=null;
+  en.sets.forEach(st=>{ if(!st.warmup && st.weight!=null && st.weight!=="") last=st.weight; });
+  if(last==null) en.sets.forEach(st=>{ if(st.weight!=null && st.weight!=="") last=st.weight; });
+  if(last!=null){ const v=parseFloat(last); if(!isNaN(v)) return v; }
+  for(let i=0;i<en.sets.length;i++){
+    const g=ghosts[i]; if(!g||g.w==null||g.w==="") continue;
+    const v=parseFloat(g.w); if(!isNaN(v)) return v;
+  }
+  return null;
+}
+/* greedy breakdown of ONE side */
+function plateBreak(perSide){
+  const out=[]; let left=tidy(perSide);
+  plateKit().plates.forEach(p=>{
+    const n=Math.floor((left+1e-6)/p.w);
+    if(n>0){ out.push({w:p.w,c:p.c,n}); left=tidy(left-n*p.w); }
+  });
+  return out;
+}
+function plateCalc(ei){
+  const seed=plateSeed(ei);
+  pcalc={weight:seed, bar:barDefault()};
+  const kit=plateKit(), u=S.units, step=plateStep();
+  openModal(`<h3>Plate calculator</h3>
+    <div class="pcw">
+      <button onclick="plateBump(-${step})">−</button>
+      <input id="pcw" inputmode="decimal" value="${seed!=null?seed:""}" placeholder="Total ${u}" oninput="plateType(this.value)">
+      <button onclick="plateBump(${step})">+</button>
+    </div>
+    <div class="field"><label>Bar</label><div class="opts" id="pcbars">${
+      kit.bars.map(b=>`<button class="opt ${b===pcalc.bar?'on':''}" data-b="${b}" onclick="plateBar(${b})">${b?b+" "+u:"No bar"}</button>`).join("")
+    }</div></div>
+    <div id="pcout"></div>`, true);
+  plateRender();
+}
+function plateType(v){ const n=parseFloat(v); pcalc.weight=(v===""||isNaN(n))?null:n; plateRender(); }
+function plateBump(d){
+  const cur=(pcalc.weight!=null)?pcalc.weight:pcalc.bar;
+  plateSetWeight(Math.max(0, tidy(cur+d)));
+}
+function plateSetWeight(v){
+  pcalc.weight=v;
+  const el=document.getElementById("pcw"); if(el) el.value=v;
+  plateRender();
+}
+function plateBar(b){
+  pcalc.bar=b; S.barWeight=b; save();   // device-only setting, not synced
+  document.querySelectorAll("#pcbars .opt").forEach(o=>o.classList.toggle("on", parseFloat(o.dataset.b)===b));
+  plateRender();
+}
+function plateRender(){
+  const out=document.getElementById("pcout"); if(!out) return;
+  const u=S.units, w=pcalc.weight, bar=pcalc.bar, step=plateStep();
+  if(w==null){ out.innerHTML=`<div class="pcsub">Enter a total weight to see what goes on each side.</div>`; return; }
+  if(w<bar-1e-6){
+    out.innerHTML=`<div class="pcline warn">Lighter than the bar</div>
+      <div class="pcsub">The bar alone is ${bar} ${u}. Pick a lighter bar, or use dumbbells.</div>`;
+    return;
+  }
+  const target=bar+Math.floor((w-bar)/step+1e-6)*step;   // nearest loadable at or below
+  const exact=Math.abs(target-w)<1e-6;
+  const perSide=tidy((target-bar)/2);
+  const list=plateBreak(perSide);
+  const viz = list.length
+    ? `<div class="pcbar"><span class="pcsleeve"></span>${
+        list.map(p=>{
+          const h=PLATE_H[plateKit().plates.findIndex(x=>x.w===p.w)]||24;
+          return Array(p.n).fill(`<span class="pcplate" style="background:${p.c};height:${h}px">${p.w}</span>`).join("");
+        }).join("")}</div>`
+    : `<div class="pcbar"><span class="pcsleeve" style="width:64px"></span></div>`;
+  const perTxt = list.length ? list.map(p=>p.n>1?`${p.w}×${p.n}`:`${p.w}`).join("  ·  ") : "—";
+  out.innerHTML = `${exact?"":`<div class="pcline warn">${w} ${u} isn't loadable</div>
+      <div class="pcsub">Closest are ${target} and ${tidy(target+step)} ${u}.
+        <button class="opt" style="margin-top:8px" onclick="plateSetWeight(${target})">${target}</button>
+        <button class="opt" style="margin-top:8px" onclick="plateSetWeight(${tidy(target+step)})">${tidy(target+step)}</button></div>`}
+    ${viz}
+    ${perSide===0
+      ? `<div class="pcline">Just the bar — ${bar} ${u}</div>`
+      : `<div class="pcline">${perSide} ${u} per side</div>
+         <div class="pcsub">${escapeHtml(perTxt)}<br>${bar?`${bar} ${u} bar + `:""}2 × ${perSide} = <b>${target} ${u}</b></div>`}`;
+}
 
 /* ============================================================
    MODAL
@@ -1448,10 +2383,19 @@ document.getElementById("themeBtn").addEventListener("click",toggleTheme);
 // keep the two phones on the same build (stale cached HTML broke joint sync before)
 checkForUpdate();
 setInterval(checkForUpdate, 5*60*1000);
-document.addEventListener("visibilitychange",()=>{ if(!document.hidden) checkForUpdate(); });
+document.addEventListener("visibilitychange",()=>{
+  if(document.hidden) return;
+  checkForUpdate();
+  clearRestNotifications();
+  // if iOS suspended us anyway (lock-screen audio off), settle the clock on return
+  if(rest.running) tickRest();
+});
+// the notification path needs a registered SW; harmless when permission was never asked for
+initNotify();
 
 // one-time cleanup of any legacy duplicate profiles
-if(dedupeProfiles()) save();
+const _dp=dedupeProfiles(), _de=dedupeExercises();
+if(_dp||_de) save();
 
 // resume an active session timer after reload
 if(S.active){ startSessionTimer(); }
@@ -1461,12 +2405,14 @@ render();
 if(!S.active && !S.profilePicked){ openGate(); }
 
 // expose for inline handlers
-Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGate,enterAs,joinPartner,leaveTogether,startTogether,restSettings,setRestDefault,applyUpdate,checkForUpdate,
+Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGate,enterAs,joinPartner,leaveTogether,startTogether,restSettings,setRestDefault,toggleNotify,toggleLockAudio,applyUpdate,checkForUpdate,
   newTemplate,saveTemplate,openTemplate,renameWorkout,removeTemplateExercise,deleteWorkout,
   startEmptyWorkout,startWorkout,openActive,openSession,addSet,removeSet,
   removeEntry,toggleDone,pickExercise,pickExerciseActive,pickExerciseForTemplate,onExType,pick,
   addExistingExercise,createAndAddExercise,finishWorkout,cancelWorkout,deleteSession,
-  tplUpdate,tplSaveNewPrompt,tplSaveNew,tplDismiss,gotoSession,howTo,rpeHelp,editGuide,saveGuide,bump,closeModal,workoutById,save,render});
+  tplUpdate,tplSaveNewPrompt,tplSaveNew,tplDismiss,gotoSession,howTo,rpeHelp,editGuide,saveGuide,bump,closeModal,workoutById,save,render,
+  plateCalc,plateType,plateBump,plateSetWeight,plateBar,
+  exerciseOpts,ssLink,ssUnlink,tplExOpts,ssLinkTpl,ssUnlinkTpl,setRestSuperset});
 </script>
 
 <!-- ============================================================
