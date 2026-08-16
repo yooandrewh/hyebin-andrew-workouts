@@ -254,6 +254,19 @@
   .prbadge{display:inline-block;background:linear-gradient(135deg,#ffb020,#ff8a00);color:#3a2400;
     font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;margin-left:7px;vertical-align:middle}
   .prline{color:var(--warn);font-size:12px;font-weight:700;margin-top:6px}
+  /* ===== Progress / analysis battery ===== */
+  .anacard{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:13px 14px;
+    margin-bottom:12px;box-shadow:var(--shadow)}
+  .anahead{display:flex;align-items:center;gap:8px}
+  .anastep{color:var(--accent);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.5px}
+  .anafoot{color:var(--muted);font-size:12.5px;font-weight:600;line-height:1.5;margin-top:6px}
+  .conf{font-size:11px;font-weight:800;padding:2px 7px;border-radius:999px;display:inline-block;margin-top:3px}
+  .conf.ok{background:rgba(21,184,119,.15);color:var(--good)}
+  .conf.mid{background:rgba(230,150,10,.15);color:var(--warn)}
+  .conf.low{background:var(--card2);color:var(--muted)}
+  .ctlbtn{margin-left:auto;font-size:12px;font-weight:800;padding:4px 11px;border-radius:999px;
+    background:var(--card2);color:var(--muted);border:1px solid var(--line)}
+  .ctlbtn.on{background:var(--accent);color:#fff;border-color:var(--accent)}
   #updbar{position:fixed;left:0;right:0;top:0;z-index:120;display:none;background:var(--good);color:#053;
     padding:calc(env(safe-area-inset-top) + 10px) 14px 12px;text-align:center;font-weight:800;font-size:15px;
     box-shadow:0 4px 16px rgba(0,0,0,.25)}
@@ -743,6 +756,81 @@ function prFor(profileId, exerciseId, beforeTs){
   });
   return best;
 }
+/* ============================================================
+   ANALYSIS BATTERY — run the controls before naming anything a trend.
+   1 RAW        naive totals (noted, never trusted on their own)
+   2 NORMALIZE  strength per set (e1RM), not volume — volume rises just from training more
+   3 CAPTURE    only sessions that actually recorded working sets
+   4 EVENT      drop outlier sessions (>1 SD in set count) so one marathon day can't carry it
+   5 DECOMPOSE  per exercise, and by weekday, to test "one lift" vs "broad"
+   Every number carries n and a confidence flag; n<3 is directional only.
+   The app reports OBSERVATIONS. It never states a cause.
+   ============================================================ */
+function profileSessions(pid){
+  return S.sessions.filter(s=>s.profileId===pid).slice().sort((a,b)=>(a.endedAt||0)-(b.endedAt||0));
+}
+function workingSets(en){ return (en&&en.sets||[]).filter(s=>!s.warmup); }
+function mean(a){ return a.length? a.reduce((x,y)=>x+y,0)/a.length : 0; }
+function sd(a){ if(a.length<2) return 0; const m=mean(a); return Math.sqrt(mean(a.map(x=>(x-m)*(x-m)))); }
+// step 3 CAPTURE: a session only counts for an exercise if it recorded real working sets
+function exerciseSeries(pid, exId, opts){
+  opts=opts||{};
+  const rows=[];
+  profileSessions(pid).forEach(s=>{
+    const en=s.entries.find(e=>e.exerciseId===exId); if(!en) return;
+    const ws=workingSets(en); if(!ws.length) return;                  // CAPTURE control
+    const best=bestSetIn(en); if(!best) return;
+    rows.push({ at:s.endedAt, e1rm:best.v, weight:best.weight, reps:best.reps,
+      setCount:ws.length, sessionId:s.id });
+  });
+  if(opts.eventControl && rows.length>=4){                            // EVENT control
+    const counts=rows.map(r=>r.setCount), m=mean(counts), s1=sd(counts);
+    if(s1>0){ const kept=rows.filter(r=>Math.abs(r.setCount-m)<=s1); if(kept.length>=3) return kept; }
+  }
+  return rows;
+}
+function confidenceOf(n){
+  if(n<3) return {label:"directional", cls:"low", note:`n=${n} — directional only`};
+  if(n<6) return {label:"limited",     cls:"mid", note:`n=${n} — limited`};
+  return   {label:"solid",             cls:"ok",  note:`n=${n}`};
+}
+// compare the first vs last third so a single session can't define the trend
+function trendOf(series){
+  const n=series.length;
+  if(n<2) return {n, pct:null, conf:confidenceOf(n)};
+  const k=Math.max(1, Math.floor(n/3));
+  const first=mean(series.slice(0,k).map(r=>r.e1rm));
+  const last =mean(series.slice(-k).map(r=>r.e1rm));
+  const pct= first>0 ? ((last-first)/first)*100 : null;
+  return {n, pct, first, last, k, conf:confidenceOf(n)};
+}
+// step 5 DECOMPOSE: is a change broad, or driven by one lift?
+function decomposeByExercise(pid, opts){
+  const ids=[...new Set(S.sessions.filter(s=>s.profileId===pid).flatMap(s=>s.entries.map(e=>e.exerciseId)))];
+  return ids.map(id=>({ id, ex:exById(id), series:exerciseSeries(pid,id,opts) }))
+            .filter(r=>r.ex && r.series.length)
+            .map(r=>({ ...r, trend:trendOf(r.series) }))
+            .sort((a,b)=>b.series.length-a.series.length);
+}
+// consistency is a RATE (sessions per week), not a count
+function consistency(pid){
+  const ss=profileSessions(pid);
+  if(ss.length<2) return {n:ss.length, perWeek:null};
+  const days=Math.max(1,(ss[ss.length-1].endedAt-ss[0].endedAt)/864e5);
+  return {n:ss.length, perWeek: ss.length/(days/7), days:Math.round(days)};
+}
+function sparkline(vals,w,h){
+  if(vals.length<2) return "";
+  const min=Math.min(...vals), max=Math.max(...vals), span=(max-min)||1;
+  const pts=vals.map((v,i)=>[ (i/(vals.length-1))*(w-4)+2, h-2-((v-min)/span)*(h-4) ]);
+  const d=pts.map((p,i)=>(i?"L":"M")+p[0].toFixed(1)+" "+p[1].toFixed(1)).join(" ");
+  const up=vals[vals.length-1]>=vals[0];
+  const col=up?"var(--good)":"var(--bad)";
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none" style="display:block">
+    <path d="${d}" fill="none" stroke="${col}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="${pts[pts.length-1][0].toFixed(1)}" cy="${pts[pts.length-1][1].toFixed(1)}" r="3" fill="${col}"/>
+  </svg>`;
+}
 // did this session set a new PR for that exercise? (strictly better than everything earlier)
 function sessionSetPR(sess, exerciseId){
   const en=sess.entries.find(e=>e.exerciseId===exerciseId); if(!en) return null;
@@ -766,6 +854,9 @@ function render(){
   }else if(route.tab==="history"){
     if(route.view==="session") v.innerHTML = viewSessionDetail(route.id);
     else v.innerHTML = viewHistory();
+  }else if(route.tab==="progress"){
+    if(route.view==="exercise") v.innerHTML = viewExerciseProgress(route.id);
+    else v.innerHTML = viewProgress();
   }
   window.scrollTo(0,0);
   renderFooter();
@@ -1026,7 +1117,8 @@ function renderProfiles(){
 function renderNav(){
   const tabs=[
     {k:"workouts",ic:"🏋️",label:"Workouts"},
-    {k:"history",ic:"📈",label:"History"}
+    {k:"history",ic:"🗓",label:"History"},
+    {k:"progress",ic:"📈",label:"Progress"}
   ];
   document.getElementById("nav").innerHTML = tabs.map(t=>`
     <button class="navbtn ${route.tab===t.k?'active':''}" onclick="go('${t.k}')">
@@ -1397,6 +1489,114 @@ function viewSessionDetail(id){
   html+=`<button class="btn danger" onclick="deleteSession('${s.id}')">Delete this session</button>`;
   return html;
 }
+
+/* ---------- Progress tab: the analysis battery, in order ---------- */
+let progControls=true;   // EVENT control on by default
+function viewProgress(){
+  const pid=S.currentProfileId, p=curProfile();
+  const ss=profileSessions(pid);
+  let html=`<div class="h1" style="margin-bottom:4px">Progress</div>
+    <div class="sub" style="margin:0 2px 14px"><b style="color:${safeColor(p.color)}">${escapeHtml(p.name)}</b>'s numbers</div>`;
+  if(ss.length===0){
+    return html+`<div class="empty"><div class="big">📈</div><div>No finished workouts yet.</div>
+      <div class="sub" style="margin-top:6px">Log a couple of sessions and the trends show up here.</div></div>`;
+  }
+  const rows=decomposeByExercise(pid,{eventControl:progControls});
+
+  // 1 RAW — stated plainly as raw, so it isn't mistaken for progress
+  const sets=ss.reduce((a,s)=>a+s.entries.reduce((b,e)=>b+workingSets(e).length,0),0);
+  const vol=ss.reduce((a,s)=>a+sessionVolume(s),0);
+  html+=`<div class="anacard"><div class="anahead"><span class="anastep">1 · Raw</span></div>
+    <div class="row between" style="margin-top:8px">
+      <div><div class="wname">${ss.length}</div><div class="meta">workouts</div></div>
+      <div><div class="wname">${sets}</div><div class="meta">working sets</div></div>
+      <div><div class="wname">${vol.toLocaleString()}</div><div class="meta">lb volume</div></div>
+    </div>
+    <div class="anafoot">Totals only. They rise with more training, so they can't show whether you're getting stronger.</div></div>`;
+
+  // 2 NORMALIZE — a rate, not a count
+  const c=consistency(pid);
+  html+=`<div class="anacard"><div class="anahead"><span class="anastep">2 · Normalized</span></div>
+    <div class="row between" style="margin-top:8px">
+      <div><div class="wname">${c.perWeek?c.perWeek.toFixed(1):"–"}</div><div class="meta">workouts / week</div></div>
+      <div><div class="wname">${ss.length?Math.round(sets/ss.length):0}</div><div class="meta">sets / workout</div></div>
+      <div><div class="wname">${c.days||0}</div><div class="meta">days tracked</div></div>
+    </div>
+    <div class="anafoot">Rates instead of totals, so a longer span doesn't look like improvement.</div></div>`;
+
+  // 3+4 CAPTURE / EVENT controls
+  html+=`<div class="anacard"><div class="anahead"><span class="anastep">3 · Controls</span>
+      <button class="ctlbtn ${progControls?'on':''}" onclick="progControls=!progControls;render()">${progControls?'On':'Off'}</button></div>
+    <div class="anafoot" style="margin-top:8px">Warm-ups and sessions with no working sets are always excluded.
+      ${progControls
+        ? `Outlier sessions (set count &gt;1 SD from your norm) are dropped too, so one unusual day can't create a trend. <b>Tap to see it uncontrolled.</b>`
+        : `Outlier sessions are currently <b>included</b> — a single marathon or cut-short day can distort the trend. <b>Tap to re-enable.</b>`}</div></div>`;
+
+  // 5 DECOMPOSE — per lift, so "broad" vs "one lift" is visible
+  html+=`<div class="anacard"><div class="anahead"><span class="anastep">5 · By exercise</span></div>
+    <div class="anafoot" style="margin:8px 0 0">Strength per lift, measured by best estimated 1-rep max — that's comparable across
+      different rep counts. Change compares your first third to your last third.</div></div>`;
+  html+=rows.map(r=>{
+    const t=r.trend, vals=r.series.map(x=>x.e1rm);
+    const pct=(t.pct==null)?null:t.pct;
+    const arrow=pct==null?"":(pct>1?"▲":(pct<-1?"▼":"▬"));
+    const col=pct==null?"var(--muted)":(pct>1?"var(--good)":(pct<-1?"var(--bad)":"var(--muted)"));
+    const best=prFor(pid,r.id);
+    return `<div class="card tap" onclick="openExerciseProgress('${r.id}')">
+      <div class="row between">
+        <div style="min-width:0">
+          <div class="exname">${escapeHtml(r.ex.name)}</div>
+          <div class="exsub">${escapeHtml([(r.ex.angle&&r.ex.angle!=="None")?r.ex.angle:null,r.ex.equipment].filter(Boolean).join(" · "))}</div>
+        </div>
+        <div style="text-align:right;flex:none">
+          <div style="font-weight:800;font-size:15px;color:${col}">${pct==null?"—":arrow+" "+(pct>0?"+":"")+pct.toFixed(1)+"%"}</div>
+          <div class="conf ${t.conf.cls}">${escapeHtml(t.conf.note)}</div>
+        </div>
+      </div>
+      <div style="margin-top:8px">${sparkline(vals,300,34)}</div>
+      <div class="meta" style="margin-top:6px">${best?`PR ${best.weight} × ${best.reps}`:""}${best?" · ":""}${r.series.length} session${r.series.length!==1?"s":""}</div>
+    </div>`;
+  }).join("");
+
+  const solid=rows.filter(r=>r.trend.n>=3);
+  const up=solid.filter(r=>r.trend.pct>1).length, down=solid.filter(r=>r.trend.pct<-1).length;
+  html+=`<div class="anacard"><div class="anahead"><span class="anastep">Observation</span></div>
+    <div class="anafoot" style="margin-top:8px">${
+      solid.length===0
+        ? `Not enough repeated lifts yet to say anything — every exercise is still under 3 sessions (directional only).`
+        : `Of ${solid.length} lift${solid.length!==1?"s":""} with n≥3: <b>${up} up</b>, <b>${down} down</b>, ${solid.length-up-down} flat.
+           ${up>=Math.max(2,solid.length*0.6) ? "That's broad rather than one lift." : (up<=1&&solid.length>=3 ? "That's narrow — driven by a small number of lifts." : "Mixed across lifts.")}`
+    }<br><span style="opacity:.75">Pattern only — this doesn't say why.</span></div></div>`;
+  return html;
+}
+function viewExerciseProgress(exId){
+  const pid=S.currentProfileId, ex=exById(exId);
+  if(!ex){ route.view="list"; return viewProgress(); }
+  const series=exerciseSeries(pid,exId,{eventControl:progControls});
+  const t=trendOf(series), best=prFor(pid,exId);
+  let html=`<button class="btn ghost sm" style="width:auto;padding-left:0;margin-bottom:6px" onclick="route.view='list';route.id=null;render()">‹ Progress</button>`;
+  html+=`<div class="h1" style="margin-bottom:2px">${escapeHtml(ex.name)}</div>
+    <div class="sub" style="margin:0 2px 14px">${escapeHtml([(ex.angle&&ex.angle!=="None")?ex.angle:null,ex.equipment].filter(Boolean).join(" · "))}</div>`;
+  if(!series.length) return html+`<div class="card" style="text-align:center;color:var(--muted)">No working sets logged yet.</div>`;
+  html+=`<div class="card">
+    <div class="row between"><div>
+      <div class="wname">${t.pct==null?"—":(t.pct>0?"+":"")+t.pct.toFixed(1)+"%"}</div>
+      <div class="meta">est. 1RM change</div></div>
+      <div style="text-align:right"><div class="conf ${t.conf.cls}">${escapeHtml(t.conf.note)}</div>
+      <div class="meta">${progControls?"outliers dropped":"uncontrolled"}</div></div></div>
+    <div style="margin-top:10px">${sparkline(series.map(r=>r.e1rm),300,60)}</div>
+    ${best?`<div class="prline">🏆 PR: ${best.weight} × ${best.reps}</div>`:""}
+  </div>`;
+  html+=`<div class="anacard"><div class="anahead"><span class="anastep">Every session</span></div></div>`;
+  html+=series.slice().reverse().map(r=>`<div class="card" style="padding:11px 14px">
+      <div class="row between"><div>
+        <div style="font-weight:700">${r.weight} × ${r.reps}</div>
+        <div class="meta">${fmtDate(r.at)}</div></div>
+      <div style="text-align:right"><div style="font-weight:800">${Math.round(r.e1rm)}</div>
+        <div class="meta">est. 1RM · ${r.setCount} set${r.setCount!==1?"s":""}</div></div></div></div>`).join("");
+  return html;
+}
+function openExerciseProgress(id){ route.tab="progress"; route.view="exercise"; route.id=id; render(); }
 
 /* ============================================================
    ACTIONS
@@ -2412,7 +2612,8 @@ Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGa
   addExistingExercise,createAndAddExercise,finishWorkout,cancelWorkout,deleteSession,
   tplUpdate,tplSaveNewPrompt,tplSaveNew,tplDismiss,gotoSession,howTo,rpeHelp,editGuide,saveGuide,bump,closeModal,workoutById,save,render,
   plateCalc,plateType,plateBump,plateSetWeight,plateBar,
-  exerciseOpts,ssLink,ssUnlink,tplExOpts,ssLinkTpl,ssUnlinkTpl,setRestSuperset});
+  exerciseOpts,ssLink,ssUnlink,tplExOpts,ssLinkTpl,ssUnlinkTpl,setRestSuperset,
+  openExerciseProgress,exerciseSeries,trendOf,decomposeByExercise,consistency,confidenceOf});
 </script>
 
 <!-- ============================================================
