@@ -349,7 +349,8 @@ function load(){
     restDefault:90,
     restSuperset:15,  // shorter rest between the exercises inside a superset (0 = none)
     notifyRest:true, // device-only: banner when rest ends (needs notification permission)
-    lockAudio:true    // device-only: keep the countdown alive while the phone is locked
+    lockAudio:true,   // device-only: keep the countdown alive while the phone is locked
+    ringOnSilent:true // device-only: bell rings through the mute switch (costs a 3s music pause)
   };
 }
 function save(){ localStorage.setItem(STORE_KEY, JSON.stringify(S)); scheduleCloudPush(); }
@@ -2293,12 +2294,16 @@ function restSettings(){
     <div class="opts" style="margin-bottom:8px">
       <button class="opt ${notifOK?'on':''}" onclick="toggleNotify()">🔔 ${notifLbl}</button>
       <button class="opt ${lockAudioOn()?'on':''}" onclick="toggleLockAudio()">🔒 Run while locked</button>
+      <button class="opt ${ringOnSilentOn()?'on':''}" onclick="toggleRingOnSilent()">🔕 Ring on silent</button>
     </div>
     <div class="muted" style="font-size:12px;margin-bottom:16px">
       ${notifHint}<br>
       <b>Run while locked</b> plays a silent track so iOS doesn't freeze the countdown when your
-      phone locks — you also get the timer on the lock screen (⏭ ±15s, ⏸ skip). It takes over the
-      Now Playing slot, so music from other apps pauses.</div>
+      phone locks — you also get the timer on the lock screen (⏭ ±15s, ⏸ skip).<br>
+      <b>Ring on silent</b> lets the bell through the mute switch. iOS only allows that for
+      audio that takes over the sound, so your music pauses for the few seconds the bell rings,
+      then comes back. Turn it off and the bell mixes politely over your music — but a muted
+      phone won't play it at all.</div>
     <div class="muted" style="font-size:11px;line-height:1.5;margin-bottom:14px;opacity:.75">
       <b>Debug</b> — ${diagLine()}</div>
     <button class="btn" onclick="closeModal()">Done</button>`);
@@ -2368,7 +2373,7 @@ function diagLine(){
   if(!d) return now+"<br>no rest recorded yet";
   const secs=(a,b)=> (a&&b) ? Math.round((b-a)/1000)+"s" : "—";
   const late = (d.firedAt&&d.dueAt) ? Math.round((d.firedAt-d.dueAt)/1000) : null;
-  return now+"<br>alarm: "+(d.alarm||"—")+"<br>last rest: asked for "+(d.want||"?")+"s, "
+  return now+"<br>alarm: "+(d.alarm||"—")+(d.alarmCat?" ("+d.alarmCat+")":"")+"<br>last rest: asked for "+(d.want||"?")+"s, "
     + (d.firedAt ? "fired "+(late===0?"on time":(late>0?late+"s late":Math.abs(late)+"s early")) : "never fired")
     + " · locked "+(d.hides||0)+"× ("+secs(d.hidAt,d.showAt||d.firedAt)+" away)"
     + " · while "+(d.firedHidden?"locked":"on screen")
@@ -2445,7 +2450,7 @@ function restDone(){
   const played = playAlarm();
   if(!played) ding();        // no media element available — fall back to the WebAudio beeps
   else if(navigator.vibrate) navigator.vibrate([180,90,180]);
-  notifyRestDone();
+  notifyRestDone(played);
 }
 function renderRest(){
   const wrap=document.getElementById("rest");
@@ -2498,6 +2503,10 @@ let restAudio=null, alarmAudio=null, audioMode=null, npSec=-1, npWired=false, sw
 let alarmTimer=null, ctxIdle=null;
 
 function lockAudioOn(){ return S.lockAudio!==false; }
+/* iOS silences ordinary app audio on the mute switch — which is how most people carry a
+   phone into a gym. "playback" is the one category that rings through it, at the price of
+   being exclusive: your music stops for the few seconds the bell takes. */
+function ringOnSilentOn(){ return S.ringOnSilent!==false; }
 function notifyOn(){ return S.notifyRest!==false; }
 
 // build a WAV data URI from samples — small enough to make at runtime, and it
@@ -2628,6 +2637,9 @@ function playAlarm(){
   const note=(v)=>{ const x=loadDiag()||{}; x.alarm=v; saveDiag(x); };
   if(!a){ note("never primed"); return false; }
   audioMode="alarm";
+  // ring through the mute switch — released again the moment the bell finishes
+  if(ringOnSilentOn()) audioSession("playback");
+  { const x=loadDiag()||{}; x.alarmCat=ringOnSilentOn()?"playback":wantedSession(); saveDiag(x); }
   try{ a.currentTime=0; }catch(e){}
   a.volume=1;
   let ok=true;
@@ -2713,7 +2725,7 @@ async function initNotify(){
   return swReg;
 }
 function notifyPerm(){ return ("Notification" in window) ? Notification.permission : "unsupported"; }
-function notifyRestDone(){
+function notifyRestDone(bellPlaying){
   const d=loadDiag()||{};
   const why = !notifyOn() ? "turned off"
             : notifyPerm()!=="granted" ? "permission: "+notifyPerm()
@@ -2722,7 +2734,12 @@ function notifyRestDone(){
   try{
     swReg.showNotification("Rest over 💪", {
       body: curExName()+" — time for your next set.",
-      tag:"rest-done", renotify:true, silent:false,
+      tag:"rest-done", renotify:true,
+      /* iOS won't let a banner carry our bell — it only has its own chime. So when the bell
+         is ringing AND we know it can be heard (playback rings through the mute switch), we
+         mute the banner and let the bell be the sound. In mixing mode a muted phone plays
+         nothing, so the banner keeps its chime as the fallback. */
+      silent: !!bellPlaying && ringOnSilentOn(),
       vibrate:[180,90,180], data:{ at:Date.now() }
     }).then(()=>{ const x=loadDiag()||{}; x.notify="sent"; saveDiag(x); })
       .catch(err=>{ const x=loadDiag()||{}; x.notify="rejected: "+err; saveDiag(x); });
@@ -2746,6 +2763,7 @@ async function toggleNotify(){
   }catch(e){}
   restSettings();
 }
+function toggleRingOnSilent(){ S.ringOnSilent=!ringOnSilentOn(); save(); restSettings(); }
 function toggleLockAudio(){
   S.lockAudio=!lockAudioOn(); save();
   if(rest.running){ if(lockAudioOn()) startKeepAlive(); else stopKeepAlive(); }
@@ -2912,7 +2930,7 @@ render();
 if(!S.active && !S.profilePicked){ openGate(); }
 
 // expose for inline handlers
-Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGate,enterAs,joinPartner,leaveTogether,startTogether,restSettings,setRestDefault,toggleNotify,toggleLockAudio,applyUpdate,checkForUpdate,
+Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGate,enterAs,joinPartner,leaveTogether,startTogether,restSettings,setRestDefault,toggleNotify,toggleLockAudio,toggleRingOnSilent,applyUpdate,checkForUpdate,
   newTemplate,saveTemplate,openTemplate,renameWorkout,removeTemplateExercise,deleteWorkout,
   renameActive,saveActiveName,renameSession,saveSessionName,setPickMode,ssPickToggle,addSupersetSelection,
   startEmptyWorkout,startWorkout,openActive,openSession,addSet,removeSet,
