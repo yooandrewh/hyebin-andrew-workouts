@@ -2368,7 +2368,7 @@ function diagLine(){
   if(!d) return now+"<br>no rest recorded yet";
   const secs=(a,b)=> (a&&b) ? Math.round((b-a)/1000)+"s" : "—";
   const late = (d.firedAt&&d.dueAt) ? Math.round((d.firedAt-d.dueAt)/1000) : null;
-  return now+"<br>last rest: asked for "+(d.want||"?")+"s, "
+  return now+"<br>alarm: "+(d.alarm||"—")+"<br>last rest: asked for "+(d.want||"?")+"s, "
     + (d.firedAt ? "fired "+(late===0?"on time":(late>0?late+"s late":Math.abs(late)+"s early")) : "never fired")
     + " · locked "+(d.hides||0)+"× ("+secs(d.hidAt,d.showAt||d.firedAt)+" away)"
     + " · while "+(d.firedHidden?"locked":"on screen")
@@ -2410,6 +2410,7 @@ function startRest(sec){
   stopRest();
   unlockAudio();
   saveDiag({want:sec, startAt:Date.now(), dueAt:Date.now()+sec*1000, hides:0});
+  primeAlarm();                    // load + unlock the bell now, while we still have the tap
   rest.running=true; rest.startAt=Date.now(); rest.endAt=rest.startAt+sec*1000;
   rest.timer=setInterval(tickRest,250);
   startKeepAlive();          // silent track so a locked phone keeps counting
@@ -2493,7 +2494,7 @@ function ding(){
    Cost: holding the audio session pauses music from other apps, so it's a
    toggle in the rest-timer sheet, not a silent default.
    ============================================================ */
-let restAudio=null, audioMode=null, npSec=-1, npWired=false, swReg=null, wavCache={};
+let restAudio=null, alarmAudio=null, audioMode=null, npSec=-1, npWired=false, swReg=null, wavCache={};
 let alarmTimer=null, ctxIdle=null;
 
 function lockAudioOn(){ return S.lockAudio!==false; }
@@ -2529,7 +2530,7 @@ const BELL_F0=660, BELL_HITS=[0,0.62,1.24];
 // same bell, rendered to a file so it can play from the lock screen
 function alarmWAV(){
   if(wavCache.alarm) return wavCache.alarm;
-  const rate=22050, dur=3.0, n=Math.round(rate*dur), s=new Float32Array(n);
+  const rate=16000, dur=3.0, n=Math.round(rate*dur), s=new Float32Array(n);
   BELL_HITS.forEach((at,hit)=>{
     const start=Math.round(at*rate), hitAmp=hit===2?1:0.9;
     BELL_PARTIALS.forEach(([mult,amp,tau])=>{
@@ -2546,14 +2547,34 @@ function alarmWAV(){
   if(peak>0.95){ const k=0.95/peak; for(let i=0;i<n;i++) s[i]*=k; }   // keep it off the rails
   return (wavCache.alarm=wavURI(s,rate));
 }
-function ensureRestAudio(){
-  if(restAudio) return restAudio;
-  restAudio=document.createElement("audio");
-  restAudio.setAttribute("playsinline","");
-  restAudio.preload="auto";
-  restAudio.addEventListener("ended",()=>{ if(audioMode==="alarm"){ audioMode=null; releaseAudio(); } });
-  document.body.appendChild(restAudio);
-  return restAudio;
+function mkAudio(){
+  const a=document.createElement("audio");
+  a.setAttribute("playsinline",""); a.preload="auto";
+  document.body.appendChild(a);
+  return a;
+}
+function ensureRestAudio(){ return restAudio || (restAudio=mkAudio()); }
+function ensureAlarmAudio(){
+  if(alarmAudio) return alarmAudio;
+  alarmAudio=mkAudio();
+  alarmAudio.addEventListener("ended",()=>{ if(audioMode==="alarm"){ audioMode=null; releaseAudio(); } });
+  return alarmAudio;
+}
+/* iOS will not start a NEW sound from a background timer. The element has to have been
+   played once from a real tap AND have its audio already loaded — swapping in the bell
+   at zero, with the phone locked, is far too late. So we do all of that here, on the ✓
+   that starts the rest: build the WAV, load it, play it silently, park it at 0. When
+   the timer hits zero all that's left is play(). */
+function primeAlarm(){
+  try{
+    const a=ensureAlarmAudio(), src=alarmWAV();
+    if(a.dataset.primed==="1") return;
+    a.src=src; a.load(); a.volume=0;
+    const done=()=>{ try{ a.pause(); a.currentTime=0; }catch(e){} a.volume=1; a.dataset.primed="1"; };
+    const p=a.play();
+    if(p && p.then) p.then(done).catch(()=>{ a.volume=1; });   // not unlocked; we'll fall back to beeps
+    else done();
+  }catch(e){}
 }
 function playSrc(src, loop){
   try{
@@ -2585,14 +2606,12 @@ function stopKeepAlive(){
    and let the beep context go idle. */
 function releaseAudio(){
   clearTimeout(alarmTimer); alarmTimer=null;
-  try{
-    if(restAudio){
-      restAudio.pause(); restAudio.loop=false;
-      restAudio.removeAttribute("src"); restAudio.load();
-      restAudio.remove();
-    }
-  }catch(e){}
-  restAudio=null;
+  [restAudio, alarmAudio].forEach(el=>{
+    try{
+      if(el){ el.pause(); el.loop=false; el.removeAttribute("src"); el.load(); el.remove(); }
+    }catch(e){}
+  });
+  restAudio=null; alarmAudio=null;
   clearNowPlaying();
   audioSession("ambient");        // hand exclusivity back — this is the bit that lets music resume
   // give ding()'s scheduled beeps time to finish before letting the context go
@@ -2605,18 +2624,24 @@ function releaseAudio(){
   }, 1200);
 }
 function playAlarm(){
-  // startRest unlocked this element from a tap, so it can still play once we're backgrounded
-  if(!restAudio && !lockAudioOn()) return false;
+  const a=alarmAudio;
+  const note=(v)=>{ const x=loadDiag()||{}; x.alarm=v; saveDiag(x); };
+  if(!a){ note("never primed"); return false; }
   audioMode="alarm";
-  const ok=playSrc(alarmWAV(), false);
-  if(ok){
-    nowPlayingText("Rest over 💪", "Next set");
-    // belt and braces: if "ended" never fires (backgrounded tab, dropped element) we
-    // still have to let go of the audio session, or music stays paused forever
-    clearTimeout(alarmTimer);
-    alarmTimer=setTimeout(()=>{ if(audioMode==="alarm") audioMode=null; releaseAudio(); }, 4000);
-  }else{ audioMode=null; releaseAudio(); }
-  return ok;
+  try{ a.currentTime=0; }catch(e){}
+  a.volume=1;
+  let ok=true;
+  try{
+    const p=a.play();
+    if(p && p.then) p.then(()=>note("played")).catch(err=>{ note("blocked: "+(err&&err.name||err)); ding(); });
+  }catch(e){ ok=false; note("threw: "+e); }
+  if(!ok){ audioMode=null; releaseAudio(); return false; }
+  nowPlayingText("Rest over 💪", "Next set");
+  // belt and braces: if "ended" never fires (backgrounded tab, dropped element) we
+  // still have to let go of the audio session, or music stays paused forever
+  clearTimeout(alarmTimer);
+  alarmTimer=setTimeout(()=>{ if(audioMode==="alarm") audioMode=null; releaseAudio(); }, 4500);
+  return true;
 }
 
 /* ---- lock-screen Now Playing card ---- */
