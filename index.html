@@ -2373,7 +2373,7 @@ function diagLine(){
   if(!d) return now+"<br>no rest recorded yet";
   const secs=(a,b)=> (a&&b) ? Math.round((b-a)/1000)+"s" : "—";
   const late = (d.firedAt&&d.dueAt) ? Math.round((d.firedAt-d.dueAt)/1000) : null;
-  return now+"<br>alarm: "+(d.alarm||"—")+(d.alarmCat?" ("+d.alarmCat+")":"")+"<br>last rest: asked for "+(d.want||"?")+"s, "
+  return now+"<br>alarm: "+(d.alarm||"—")+(d.alarmCat?" ("+d.alarmCat+")":"")+(d.bell?" · bell "+d.bell:"")+"<br>last rest: asked for "+(d.want||"?")+"s, "
     + (d.firedAt ? "fired "+(late===0?"on time":(late>0?late+"s late":Math.abs(late)+"s early")) : "never fired")
     + " · locked "+(d.hides||0)+"× ("+secs(d.hidAt,d.showAt||d.firedAt)+" away)"
     + " · while "+(d.firedHidden?"locked":"on screen")
@@ -2569,20 +2569,23 @@ function ensureAlarmAudio(){
   alarmAudio.addEventListener("ended",()=>{ if(audioMode==="alarm"){ audioMode=null; releaseAudio(); } });
   return alarmAudio;
 }
-/* iOS will not start a NEW sound from a background timer. The element has to have been
-   played once from a real tap AND have its audio already loaded — swapping in the bell
-   at zero, with the phone locked, is far too late. So we do all of that here, on the ✓
-   that starts the rest: build the WAV, load it, play it silently, park it at 0. When
-   the timer hits zero all that's left is play(). */
+/* iOS lets an element that is ALREADY playing carry on in the background; it will not
+   reliably start a paused one. Priming it and parking it at 0 wasn't enough — at zero, on
+   a locked phone, play() resolved and no sound came out.
+
+   So the bell never stops. From the ✓ that starts the rest it loops silently at volume 0,
+   and at zero we only rewind and turn it up — no new playback to start, nothing for iOS
+   to refuse. */
 function primeAlarm(){
   try{
     const a=ensureAlarmAudio(), src=alarmWAV();
-    if(a.dataset.primed==="1") return;
-    a.src=src; a.load(); a.volume=0;
-    const done=()=>{ try{ a.pause(); a.currentTime=0; }catch(e){} a.volume=1; a.dataset.primed="1"; };
-    const p=a.play();
-    if(p && p.then) p.then(done).catch(()=>{ a.volume=1; });   // not unlocked; we'll fall back to beeps
-    else done();
+    if(a.src!==src){ a.src=src; a.load(); }
+    a.loop=true; a.volume=0; a.muted=false;
+    if(a.paused){
+      const p=a.play();
+      if(p && p.then) p.then(()=>{ a.dataset.primed="1"; }).catch(()=>{ a.dataset.primed="0"; });
+      else a.dataset.primed="1";
+    }
   }catch(e){}
 }
 function playSrc(src, loop){
@@ -2639,13 +2642,22 @@ function playAlarm(){
   audioMode="alarm";
   // ring through the mute switch — released again the moment the bell finishes
   if(ringOnSilentOn()) audioSession("playback");
-  { const x=loadDiag()||{}; x.alarmCat=ringOnSilentOn()?"playback":wantedSession(); saveDiag(x); }
+  { const x=loadDiag()||{};
+    // what we asked for AND what iOS actually gave us, plus whether the bell was still rolling
+    x.alarmCat=(ringOnSilentOn()?"playback":wantedSession())
+      + "→" + ((navigator.audioSession&&navigator.audioSession.type)||"n/a");
+    x.bell=(a.paused?"was paused":"rolling")+" t="+(a.currentTime||0).toFixed(1)+" rs="+a.readyState;
+    saveDiag(x); }
+  a.loop=false;                    // it's been looping silently — let this pass be the last
   try{ a.currentTime=0; }catch(e){}
   a.volume=1;
   let ok=true;
   try{
-    const p=a.play();
-    if(p && p.then) p.then(()=>note("played")).catch(err=>{ note("blocked: "+(err&&err.name||err)); ding(); });
+    // normally already playing, so this is only a safety net
+    if(a.paused){
+      const p=a.play();
+      if(p && p.then) p.then(()=>note("played")).catch(err=>{ note("blocked: "+(err&&err.name||err)); ding(); });
+    }else note("played");
   }catch(e){ ok=false; note("threw: "+e); }
   if(!ok){ audioMode=null; releaseAudio(); return false; }
   nowPlayingText("Rest over 💪", "Next set");
@@ -2735,11 +2747,10 @@ function notifyRestDone(bellPlaying){
     swReg.showNotification("Rest over 💪", {
       body: curExName()+" — time for your next set.",
       tag:"rest-done", renotify:true,
-      /* iOS won't let a banner carry our bell — it only has its own chime. So when the bell
-         is ringing AND we know it can be heard (playback rings through the mute switch), we
-         mute the banner and let the bell be the sound. In mixing mode a muted phone plays
-         nothing, so the banner keeps its chime as the fallback. */
-      silent: !!bellPlaying && ringOnSilentOn(),
+      /* iOS won't let a banner carry our bell — it only has its own chime. Silencing the
+         banner in favour of the bell left a locked phone making no sound at all, so the
+         chime stays until the bell is confirmed audible on a real device. */
+      silent: false,
       vibrate:[180,90,180], data:{ at:Date.now() }
     }).then(()=>{ const x=loadDiag()||{}; x.notify="sent"; saveDiag(x); })
       .catch(err=>{ const x=loadDiag()||{}; x.notify="rejected: "+err; saveDiag(x); });
