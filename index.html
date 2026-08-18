@@ -322,6 +322,9 @@ const PROFILE_COLORS = ["#2f7bff","#ff6b9d","#27c281","#ffb020","#a16bff","#ff7a
 /* ---------- state ---------- */
 let S = load();
 let route = { tab:"workouts", view:"list", id:null };  // view: list | active | session
+// Where you were on each tab, so hopping to History and back doesn't dump you out
+// of the workout you're in the middle of. Also remembers scroll for that tab.
+const tabMem = { workouts:{view:"list",id:null,scroll:0}, history:{view:"list",id:null,scroll:0}, progress:{view:"list",id:null,scroll:0} };
 let modal = null;
 let beepCtx = null;
 
@@ -843,6 +846,7 @@ function sessionSetPR(sess, exerciseId){
    RENDER
    ============================================================ */
 function render(){
+  rememberTab();
   applyTheme();
   renderProfiles();
   renderNav();
@@ -858,10 +862,28 @@ function render(){
     if(route.view==="exercise") v.innerHTML = viewExerciseProgress(route.id);
     else v.innerHTML = viewProgress();
   }
-  window.scrollTo(0,0);
+  restoreScroll();
   renderFooter();
   renderPartner();
   renderRest();
+}
+/* A render that stays on the same screen (adding a set, ticking one off) keeps the
+   scroll position; only an actual navigation jumps to the top. And on the way out of
+   a screen we stash it in tabMem, so coming back to that tab lands where you left —
+   done here rather than in go() so it also covers the jumps between tabs (a session
+   detail opening an exercise's progress, finishing a workout, …). */
+let lastRoute={tab:"workouts",view:"list",id:null}, routeChanged=false, pendingScroll=null;
+function rememberTab(){
+  routeChanged = !(lastRoute.tab===route.tab && lastRoute.view===route.view
+                   && (lastRoute.id||null)===(route.id||null));
+  const m=tabMem[lastRoute.tab];
+  // window.scrollY is still the outgoing screen's — the DOM hasn't been swapped yet
+  if(m){ m.view=lastRoute.view; m.id=lastRoute.id; m.scroll=window.scrollY||0; }
+  lastRoute={tab:route.tab, view:route.view, id:route.id};
+}
+function restoreScroll(){
+  if(pendingScroll!=null){ window.scrollTo(0,pendingScroll); pendingScroll=null; }
+  else if(routeChanged) window.scrollTo(0,0);
 }
 function renderFooter(){
   const e=document.getElementById("ver"); if(!e) return;
@@ -1152,9 +1174,11 @@ function viewWorkouts(){
       <div style="margin-top:6px">No templates yet.</div>
       <div class="sub" style="margin-top:4px">Make a reusable plan like "Push Day", or just start an empty workout and save it as a template at the end.</div></div>`;
   }else{
-    // most recently performed template first; never-done ones keep their order at the bottom
+    // most recently touched template first — last performed, or when it was created if
+    // it's never been done, so a template you just made lands at the top instead of the bottom
+    const freshness = x => Math.max((x.last&&x.last.endedAt)||0, x.w.createdAt||0);
     const byRecent = S.workouts.map((w,i)=>({w,i,last:workoutLastDone(w.id, S.currentProfileId)}))
-      .sort((a,b)=>(((b.last&&b.last.endedAt)||0)-((a.last&&a.last.endedAt)||0)) || (a.i-b.i));
+      .sort((a,b)=>(freshness(b)-freshness(a)) || (a.i-b.i));
     html += byRecent.map(({w,last})=>{
       return `<div class="card tap" onclick="openTemplate('${w.id}')">
         <div class="row between">
@@ -1440,7 +1464,9 @@ function viewActive(){
 function viewHistory(){
   let html=`<div class="h1" style="margin-bottom:4px">History</div>`;
   html+=`<div class="sub" style="margin:0 2px 14px"><b style="color:${curProfile().color}">${escapeHtml(curProfile().name)}</b>'s training log</div>`;
-  const mine=S.sessions.filter(s=>s.profileId===S.currentProfileId).slice().reverse();
+  // newest first by end time — array order isn't reliable once a synced device merges in
+  const mine=S.sessions.filter(s=>s.profileId===S.currentProfileId).slice()
+    .sort((a,b)=>(b.endedAt||0)-(a.endedAt||0));
   if(mine.length===0){
     html+=`<div class="empty"><div class="big">📈</div><div>No finished workouts yet.</div>
       <div class="sub" style="margin-top:6px">Complete a workout and ${escapeHtml(curProfile().name)}'s results show up here.</div></div>`;
@@ -1601,7 +1627,28 @@ function openExerciseProgress(id){ route.tab="progress"; route.view="exercise"; 
 /* ============================================================
    ACTIONS
    ============================================================ */
-function go(tab){ route.tab=tab; route.view=(tab==='workouts'&&S.active&&route.view==='active')?'active':'list'; route.id=null; render(); }
+function go(tab){
+  if(route.tab===tab){                       // tapping the tab you're on pops back to its list
+    route.view="list"; route.id=null; render(); return;
+  }
+  const m=tabMem[tab]||{view:"list",id:null,scroll:0};
+  route.tab=tab; route.view=m.view; route.id=m.id;
+  if(!validRoute()){ route.view="list"; route.id=null; m.view="list"; m.id=null; m.scroll=0; }
+  pendingScroll=m.scroll||0;
+  render();
+}
+// a remembered screen can go stale — the session got deleted, the workout finished
+function validRoute(){
+  if(route.tab==="workouts"){
+    if(route.view==="active") return !!S.active;
+    if(route.view==="template") return !!workoutById(route.id);
+  }else if(route.tab==="history"){
+    if(route.view==="session") return S.sessions.some(x=>x.id===route.id);
+  }else if(route.tab==="progress"){
+    if(route.view==="exercise") return !!exById(route.id);
+  }
+  return true;
+}
 function openActive(){ route.tab="workouts"; route.view="active"; render(); }
 function openSession(id){ route.tab="history"; route.view="session"; route.id=id; render(); }
 
@@ -1631,7 +1678,7 @@ function newTemplate(){
 function saveTemplate(){
   const n=(document.getElementById("wname").value||"").trim();
   if(!n) return;
-  const w={id:uid(),name:n,exerciseIds:[]};
+  const w={id:uid(),name:n,exerciseIds:[],createdAt:Date.now()};
   S.workouts.push(w); save(); closeModal();
   route.tab="workouts"; route.view="template"; route.id=w.id; render();
 }
@@ -1947,7 +1994,7 @@ function tplSaveNewPrompt(){
 function tplSaveNew(){
   const el=document.getElementById("tplname");
   const nm=((el?el.value:pendingTpl.name)||"Workout").trim()||"Workout";
-  const w={ id:uid(), name:nm, exerciseIds:pendingTpl.exIds.slice(), ss:tplSsFromPending() };
+  const w={ id:uid(), name:nm, exerciseIds:pendingTpl.exIds.slice(), ss:tplSsFromPending(), createdAt:Date.now() };
   S.workouts.push(w); ssNormalizeTpl(w);
   save(); tplDone();
 }
@@ -2179,6 +2226,7 @@ let restLabel="";
 // iOS only allows audio that's unlocked by a user gesture. The rest beep fires from a
 // timer, so prime/resume the AudioContext here (startRest runs from the ✓ tap).
 function unlockAudio(){
+  clearTimeout(ctxIdle); ctxIdle=null;
   try{
     beepCtx = beepCtx || new (window.AudioContext||window.webkitAudioContext)();
     if(beepCtx.state==="suspended") beepCtx.resume();
@@ -2265,6 +2313,7 @@ function ding(){
    toggle in the rest-timer sheet, not a silent default.
    ============================================================ */
 let restAudio=null, audioMode=null, npSec=-1, npWired=false, swReg=null, wavCache={};
+let alarmTimer=null, ctxIdle=null;
 
 function lockAudioOn(){ return S.lockAudio!==false; }
 function notifyOn(){ return S.notifyRest!==false; }
@@ -2309,7 +2358,7 @@ function ensureRestAudio(){
   restAudio=document.createElement("audio");
   restAudio.setAttribute("playsinline","");
   restAudio.preload="auto";
-  restAudio.addEventListener("ended",()=>{ if(audioMode==="alarm"){ audioMode=null; clearNowPlaying(); } });
+  restAudio.addEventListener("ended",()=>{ if(audioMode==="alarm"){ audioMode=null; releaseAudio(); } });
   document.body.appendChild(restAudio);
   return restAudio;
 }
@@ -2333,16 +2382,40 @@ function startKeepAlive(){
 function stopKeepAlive(){
   if(audioMode==="alarm") return;       // let a firing alarm finish
   audioMode=null;
-  try{ if(restAudio){ restAudio.pause(); } }catch(e){}
+  releaseAudio();
+}
+/* Hand the audio session back to whatever was playing before us. Pausing the element
+   isn't enough on iOS: media that's still loaded — and a still-running AudioContext —
+   keep the session held, so the podcast/playlist we interrupted never resumes and the
+   lock-screen card stays ours. So tear the element down, drop the Now Playing handlers,
+   and let the beep context go idle. */
+function releaseAudio(){
+  clearTimeout(alarmTimer); alarmTimer=null;
+  try{
+    if(restAudio){
+      restAudio.pause(); restAudio.loop=false;
+      restAudio.removeAttribute("src"); restAudio.load();
+      restAudio.remove();
+    }
+  }catch(e){}
+  restAudio=null;
   clearNowPlaying();
+  // give ding()'s scheduled beeps time to finish before suspending the context
+  clearTimeout(ctxIdle);
+  ctxIdle=setTimeout(()=>{ ctxIdle=null; try{ if(beepCtx && beepCtx.state==="running") beepCtx.suspend(); }catch(e){} }, 1200);
 }
 function playAlarm(){
   // startRest unlocked this element from a tap, so it can still play once we're backgrounded
   if(!restAudio && !lockAudioOn()) return false;
   audioMode="alarm";
   const ok=playSrc(alarmWAV(), false);
-  if(ok) nowPlayingText("Rest over 💪", "Next set");
-  else audioMode=null;
+  if(ok){
+    nowPlayingText("Rest over 💪", "Next set");
+    // belt and braces: if "ended" never fires (backgrounded tab, dropped element) we
+    // still have to let go of the audio session, or music stays paused forever
+    clearTimeout(alarmTimer);
+    alarmTimer=setTimeout(()=>{ if(audioMode==="alarm") audioMode=null; releaseAudio(); }, 4000);
+  }else{ audioMode=null; releaseAudio(); }
   return ok;
 }
 
@@ -2389,9 +2462,12 @@ function nowPlaying(left, total){
   }catch(e){}
 }
 function clearNowPlaying(){
-  npSec=-1;
+  npSec=-1; npWired=false;
   if(!("mediaSession" in navigator)) return;
   try{ navigator.mediaSession.playbackState="none"; navigator.mediaSession.metadata=null; }catch(e){}
+  // release the transport buttons too, so the lock screen goes back to the music app
+  try{ ["play","pause","stop","nexttrack","previoustrack"]
+        .forEach(k=>navigator.mediaSession.setActionHandler(k,null)); }catch(e){}
 }
 // lock-screen transport: play/pause = skip the rest, track skip = ±15s
 function wireNowPlaying(){
