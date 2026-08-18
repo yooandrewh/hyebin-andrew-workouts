@@ -705,6 +705,12 @@ function recommend(pid, exId){
       ? `First time — pick a help level you can do <b>${repsLow===repsHigh?repsLow:repsLow+"–"+repsHigh} reps</b> with, then we'll strip it off.`
       : `First time — aim <b>${repsLow===repsHigh?repsLow:repsLow+"–"+repsHigh} reps</b>, then we'll progress next time.` };
 }
+/* What the workout in progress is called: a name you typed for this session, else the
+   template it came from, else the day. Whatever this says is what lands in History. */
+function activeName(a){
+  a=a||S.active; if(!a) return "";
+  return a.name || (workoutById(a.workoutId)||{}).name || autoWorkoutName(a.startedAt);
+}
 const WEEKDAYS=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 function autoWorkoutName(ts){ return WEEKDAYS[new Date(ts||Date.now()).getDay()]+" Workout"; }
 // a name we generated rather than one the user typed — don't prefill it into "name your template"
@@ -983,7 +989,7 @@ function myPresence(){
   const defs=ids.map(id=>exById(id)).filter(Boolean)
     .map(e=>({id:e.id,name:e.name,equipment:e.equipment,angle:e.angle,assisted:isAssisted(e)}));
   return { profileId:a.profileId, name:prof?prof.name:"", color:prof?prof.color:"#888", active:true,
-    workoutId:a.workoutId||null, workoutName:(workoutById(a.workoutId)||{}).name||autoWorkoutName(a.startedAt), startedAt:a.startedAt,
+    workoutId:a.workoutId||null, workoutName:activeName(a), startedAt:a.startedAt,
     exercise:ex?exDisplay(ex):"", lastSet, setsDone, restEndsAt: rest.running?rest.endAt:null,
     joint: !!a.joint, listAt: a.listAt||a.startedAt, exerciseIds:ids, exercises:defs,
     removed: a.removed||{}, ss: ssMapOf(a.entries),   // supersets are part of the shared plan
@@ -1160,7 +1166,7 @@ function viewWorkouts(){
     const w=workoutById(S.active.workoutId);
     html += `<div class="card tap" style="border-color:var(--accent)" onclick="openActive()">
       <div class="row between">
-        <div><div class="wname">${escapeHtml(w?w.name:autoWorkoutName(S.active.startedAt))}</div>
+        <div><div class="wname">${escapeHtml(activeName(S.active))}</div>
         <div class="meta" id="resumeDur">In progress · ${fmtDur((Date.now()-S.active.startedAt)/1000)}</div></div>
         <div class="btn sm" style="background:var(--accent)">Resume ▶</div>
       </div></div>`;
@@ -1396,7 +1402,9 @@ function viewActive(){
     <div class="timerbig" id="sessDur">${fmtDur((Date.now()-a.startedAt)/1000)}</div>
     <button class="btn sm" style="background:var(--good);color:#053;width:auto" onclick="finishWorkout()">Finish</button>
   </div>`;
-  html += `<div class="h1" style="margin-bottom:10px">${escapeHtml(w?w.name:autoWorkoutName(S.active&&S.active.startedAt))}</div>`;
+  html += `<div class="row between" style="align-items:flex-start;gap:10px;margin-bottom:10px">
+    <div class="h1" style="margin:0">${escapeHtml(activeName(a))}</div>
+    <button class="btn ghost sm" style="width:auto;flex:0 0 auto" onclick="renameActive()">✏️ Rename</button></div>`;
   if(a.entries.length===0){
     html += `<div class="card" style="text-align:center;color:var(--muted)">No exercises yet — tap “Add Exercise” to start logging.</div>`;
   }
@@ -1729,7 +1737,7 @@ function startWorkout(id){
     const cur=workoutById(S.active.workoutId);
     return confirmDiscard({
       title:"Another workout is in progress",
-      body:`Starting this one throws away “${escapeHtml(cur?cur.name:autoWorkoutName(S.active.startedAt))}”${n?` and its <b>${n} logged set${n===1?"":"s"}</b>`:""}.`,
+      body:`Starting this one throws away “${escapeHtml(activeName(S.active))}”${n?` and its <b>${n} logged set${n===1?"":"s"}</b>`:""}.`,
       action:"Hold to discard & switch"
     }, ()=>{ S.active=null; startWorkout(id); });
   }
@@ -2018,7 +2026,7 @@ function finishWorkout(){
     cancelWorkout(true); return;
   }
   const w=workoutById(a.workoutId);
-  const sess={ id:uid(), workoutId:a.workoutId, workoutName:w?w.name:autoWorkoutName(a.startedAt),
+  const sess={ id:uid(), workoutId:a.workoutId, workoutName:activeName(a),
     profileId:a.profileId, startedAt:a.startedAt, endedAt:Date.now(),
     durationSec:Math.round((Date.now()-a.startedAt)/1000), entries };
   S.sessions.push(sess);
@@ -2124,6 +2132,22 @@ function cancelWorkout(silent){
 /* Rename a workout you already did. Only this session — the template it came from and
    every other session keep their own names, so fixing up one day's label can't rewrite
    your history. */
+// name the workout while you're in it — this is the name it gets saved under
+function renameActive(){
+  if(!S.active) return;
+  openModal(`<h3>Name this workout</h3>
+    <div class="muted" style="margin:-4px 0 14px">What it'll be saved as in History. Your template keeps its own name.</div>
+    <div class="field"><label>Name</label>
+      <input class="text" id="actname" value="${escapeHtml(activeName())}" placeholder="e.g. Leg Day"></div>
+    <button class="btn" onclick="saveActiveName()">Save</button>`);
+  setTimeout(()=>{ const i=document.getElementById("actname"); if(i){ i.focus(); i.select(); } },60);
+}
+function saveActiveName(){
+  const el=document.getElementById("actname");
+  const v=((el?el.value:"")||"").trim();
+  if(S.active && v) S.active.name=v;
+  save(); closeModal(); render(); pushPresence();
+}
 function renameSession(id){
   const s=S.sessions.find(x=>x.id===id); if(!s) return;
   openModal(`<h3>Rename workout</h3>
@@ -2865,6 +2889,7 @@ if(!S.active && !S.profilePicked){ openGate(); }
 // expose for inline handlers
 Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGate,enterAs,joinPartner,leaveTogether,startTogether,restSettings,setRestDefault,toggleNotify,toggleLockAudio,applyUpdate,checkForUpdate,
   newTemplate,saveTemplate,openTemplate,renameWorkout,removeTemplateExercise,deleteWorkout,
+  renameActive,saveActiveName,renameSession,saveSessionName,setPickMode,ssPickToggle,addSupersetSelection,
   startEmptyWorkout,startWorkout,openActive,openSession,addSet,removeSet,
   removeEntry,toggleDone,pickExercise,pickExerciseActive,pickExerciseForTemplate,onExType,pick,
   addExistingExercise,createAndAddExercise,finishWorkout,cancelWorkout,deleteSession,
