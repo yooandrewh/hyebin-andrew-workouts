@@ -2415,7 +2415,8 @@ function startRest(sec){
   stopRest();
   unlockAudio();
   saveDiag({want:sec, startAt:Date.now(), dueAt:Date.now()+sec*1000, hides:0});
-  primeAlarm();                    // load + unlock the bell now, while we still have the tap
+  primeAlarm();                    // load + unlock the fallback element while we have the tap
+  scheduleBell(sec);               // and put the bell itself on the clock
   rest.running=true; rest.startAt=Date.now(); rest.endAt=rest.startAt+sec*1000;
   rest.timer=setInterval(tickRest,250);
   startKeepAlive();          // silent track so a locked phone keeps counting
@@ -2425,10 +2426,12 @@ function adjustRest(delta){
   if(!rest.running){ restLabel=""; startRest(Math.max(15,S.restDefault+delta)); return; }
   rest.endAt+=delta*1000;
   if(rest.endAt<=Date.now()){ stopRest(); return; }
+  scheduleBell((rest.endAt-Date.now())/1000);   // ±15s moves the bell too
   tickRest();
 }
 function stopRest(){
   rest.running=false; if(rest.timer)clearInterval(rest.timer); rest.timer=null;
+  if(audioMode!=="alarm") cancelBell();      // skipping a rest cancels its bell
   stopKeepAlive(); renderRest(); pushPresence();
 }
 function tickRest(){
@@ -2537,9 +2540,9 @@ function silentWAV(){
 const BELL_PARTIALS=[[1,1.00,1.5],[2.4,0.55,0.85],[3.9,0.33,0.5],[5.2,0.18,0.32],[7.1,0.10,0.2]];
 const BELL_F0=660, BELL_HITS=[0,0.62,1.24];
 // same bell, rendered to a file so it can play from the lock screen
-function alarmWAV(){
-  if(wavCache.alarm) return wavCache.alarm;
-  const rate=16000, dur=3.0, n=Math.round(rate*dur), s=new Float32Array(n);
+const BELL_DUR=3.0;
+function bellSamples(rate){
+  const n=Math.round(rate*BELL_DUR), s=new Float32Array(n);
   BELL_HITS.forEach((at,hit)=>{
     const start=Math.round(at*rate), hitAmp=hit===2?1:0.9;
     BELL_PARTIALS.forEach(([mult,amp,tau])=>{
@@ -2554,7 +2557,37 @@ function alarmWAV(){
   });
   let peak=0; for(let i=0;i<n;i++) peak=Math.max(peak,Math.abs(s[i]));
   if(peak>0.95){ const k=0.95/peak; for(let i=0;i<n;i++) s[i]*=k; }   // keep it off the rails
-  return (wavCache.alarm=wavURI(s,rate));
+  return s;
+}
+function alarmWAV(){
+  return wavCache.alarm || (wavCache.alarm=wavURI(bellSamples(16000),16000));
+}
+/* The bell is SCHEDULED into the audio graph the moment rest starts, to fire at zero.
+   Nothing has to start on a locked phone, and — the reason this replaced the looping
+   element — nothing depends on volume, which iOS ignores on audio elements. That's what
+   turned "silent placeholder loop" into a bell ringing for the whole rest. */
+let bellSrc=null, bellScheduled=false;
+function scheduleBell(inSec){
+  cancelBell();
+  if(!beepCtx) return;
+  try{
+    const rate=beepCtx.sampleRate||16000;
+    if(!wavCache.buf || wavCache.bufRate!==rate){
+      const data=bellSamples(rate);
+      const b=beepCtx.createBuffer(1, data.length, rate);
+      b.copyToChannel ? b.copyToChannel(data,0) : b.getChannelData(0).set(data);
+      wavCache.buf=b; wavCache.bufRate=rate;
+    }
+    const src=beepCtx.createBufferSource();
+    src.buffer=wavCache.buf;
+    src.connect(beepCtx.destination);
+    src.start(beepCtx.currentTime + Math.max(0, inSec));
+    bellSrc=src; bellScheduled=true;
+  }catch(e){ bellScheduled=false; }
+}
+function cancelBell(){
+  try{ if(bellSrc){ bellSrc.stop(); bellSrc.disconnect(); } }catch(e){}
+  bellSrc=null; bellScheduled=false;
 }
 function mkAudio(){
   const a=document.createElement("audio");
@@ -2580,11 +2613,13 @@ function primeAlarm(){
   try{
     const a=ensureAlarmAudio(), src=alarmWAV();
     if(a.src!==src){ a.src=src; a.load(); }
-    a.loop=true; a.volume=0; a.muted=false;
+    a.loop=false;
+    a.muted=true;                    // muted, NOT volume=0 — iOS ignores volume on media elements
+    const done=()=>{ try{ a.pause(); a.currentTime=0; }catch(e){} a.dataset.primed="1"; };
     if(a.paused){
       const p=a.play();
-      if(p && p.then) p.then(()=>{ a.dataset.primed="1"; }).catch(()=>{ a.dataset.primed="0"; });
-      else a.dataset.primed="1";
+      if(p && p.then) p.then(done).catch(()=>{ a.dataset.primed="0"; });
+      else done();
     }
   }catch(e){}
 }
@@ -2630,10 +2665,11 @@ function releaseAudio(){
   clearTimeout(ctxIdle);
   ctxIdle=setTimeout(()=>{
     ctxIdle=null;
-    // close rather than suspend: a suspended context still holds a session open
+    // close rather than suspend: a suspended context still holds a session open. Late enough
+    // that a bell mid-ring isn't cut off in the process.
     try{ if(beepCtx && beepCtx.state!=="closed" && beepCtx.close) beepCtx.close(); }catch(e){}
     beepCtx=null;
-  }, 1200);
+  }, (BELL_DUR*1000)+800);
 }
 function playAlarm(){
   const a=alarmAudio;
@@ -2648,17 +2684,19 @@ function playAlarm(){
       + "→" + ((navigator.audioSession&&navigator.audioSession.type)||"n/a");
     x.bell=(a.paused?"was paused":"rolling")+" t="+(a.currentTime||0).toFixed(1)+" rs="+a.readyState;
     saveDiag(x); }
-  a.loop=false;                    // it's been looping silently — let this pass be the last
-  try{ a.currentTime=0; }catch(e){}
-  a.volume=1;
-  let ok=true;
+  const ctxLive = !!(beepCtx && beepCtx.state==="running");
+  let ok = bellScheduled && ctxLive;          // the scheduled bell is sounding right now
+  bellScheduled=false; bellSrc=null;          // it's playing; nothing left to cancel
+  // ALSO nudge the element. If both land they're the same waveform starting together, and
+  // if the scheduled one didn't survive being backgrounded this is what you hear.
   try{
-    // normally already playing, so this is only a safety net
-    if(a.paused){
-      const p=a.play();
-      if(p && p.then) p.then(()=>note("played")).catch(err=>{ note("blocked: "+(err&&err.name||err)); ding(); });
-    }else note("played");
-  }catch(e){ ok=false; note("threw: "+e); }
+    a.muted=false; a.loop=false;
+    try{ a.currentTime=0; }catch(e){}
+    const p=a.play();
+    if(p && p.then) p.then(()=>{ ok=true; note(ctxLive?"scheduled + element":"element"); })
+                     .catch(err=>{ note(ok?"scheduled":"blocked: "+(err&&err.name||err)); if(!ok) ding(); });
+    else ok=true;
+  }catch(e){ note(ok?"scheduled":"threw: "+e); }
   if(!ok){ audioMode=null; releaseAudio(); return false; }
   nowPlayingText("Rest over 💪", "Next set");
   // belt and braces: if "ended" never fires (backgrounded tab, dropped element) we
