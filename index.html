@@ -2347,14 +2347,18 @@ function ding(){
     if(navigator.vibrate) navigator.vibrate([180,90,180]);
     beepCtx = beepCtx || new (window.AudioContext||window.webkitAudioContext)();
     if(beepCtx.state==="suspended") beepCtx.resume();
-    [0,0.18,0.36].forEach((d,i)=>{
-      const o=beepCtx.createOscillator(), g=beepCtx.createGain();
-      o.frequency.value= i===2?1040:780; o.type="sine";
-      o.connect(g); g.connect(beepCtx.destination);
-      const tt=beepCtx.currentTime+d;
-      g.gain.setValueAtTime(0.0001,tt); g.gain.exponentialRampToValueAtTime(0.4,tt+0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001,tt+0.15);
-      o.start(tt); o.stop(tt+0.16);
+    const now=beepCtx.currentTime;
+    BELL_HITS.forEach(at=>{
+      BELL_PARTIALS.forEach(([mult,amp,tau])=>{
+        const o=beepCtx.createOscillator(), g=beepCtx.createGain();
+        o.type="sine"; o.frequency.value=BELL_F0*mult;
+        o.connect(g); g.connect(beepCtx.destination);
+        const tt=now+at;
+        g.gain.setValueAtTime(0.0001,tt);
+        g.gain.exponentialRampToValueAtTime(amp*0.35,tt+0.004);   // struck, not faded in
+        g.gain.exponentialRampToValueAtTime(0.0001,tt+tau);
+        o.start(tt); o.stop(tt+tau+0.02);
+      });
     });
   }catch(e){}
 }
@@ -2401,18 +2405,30 @@ function silentWAV(){
   for(let i=0;i<n;i++) s[i]=Math.sin(2*Math.PI*50*i/rate)*0.0002;
   return (wavCache.silent=wavURI(s,rate));
 }
-// same three-beep motif as ding(), but as a file so it can play from the lock screen
+/* End of round. A bell is struck metal: a few partials that AREN'T whole-number
+   multiples of the fundamental (that inharmonicity is what stops it sounding like an
+   organ) each ringing out at its own rate — the bright ones die first, the low hum
+   carries. Three strikes, like the end of a round. */
+const BELL_PARTIALS=[[1,1.00,1.5],[2.4,0.55,0.85],[3.9,0.33,0.5],[5.2,0.18,0.32],[7.1,0.10,0.2]];
+const BELL_F0=660, BELL_HITS=[0,0.62,1.24];
+// same bell, rendered to a file so it can play from the lock screen
 function alarmWAV(){
   if(wavCache.alarm) return wavCache.alarm;
-  const rate=11025, dur=2.6, n=Math.round(rate*dur), s=new Float32Array(n);
-  const beeps=[[0,780],[0.18,780],[0.36,1040],[0.9,780],[1.08,780],[1.26,1040]];
-  beeps.forEach(([at,hz])=>{
-    const start=Math.round(at*rate), len=Math.round(0.15*rate);
-    for(let i=0;i<len && start+i<n;i++){
-      const env=Math.min(1,i/(rate*0.01))*Math.pow(1-i/len,1.5);
-      s[start+i]+=Math.sin(2*Math.PI*hz*i/rate)*0.55*env;
-    }
+  const rate=22050, dur=3.0, n=Math.round(rate*dur), s=new Float32Array(n);
+  BELL_HITS.forEach((at,hit)=>{
+    const start=Math.round(at*rate), hitAmp=hit===2?1:0.9;
+    BELL_PARTIALS.forEach(([mult,amp,tau])=>{
+      const hz=BELL_F0*mult;
+      for(let i=0;start+i<n;i++){
+        const t=i/rate;
+        const env=Math.exp(-t/tau)*Math.min(1,t/0.002);   // instant strike, long ring
+        if(t>0.01 && env<0.0005) break;   // ...but don't quit during the attack, when it IS near zero
+        s[start+i]+=Math.sin(2*Math.PI*hz*t)*amp*hitAmp*0.30*env;
+      }
+    });
   });
+  let peak=0; for(let i=0;i<n;i++) peak=Math.max(peak,Math.abs(s[i]));
+  if(peak>0.95){ const k=0.95/peak; for(let i=0;i<n;i++) s[i]*=k; }   // keep it off the rails
   return (wavCache.alarm=wavURI(s,rate));
 }
 function ensureRestAudio(){
