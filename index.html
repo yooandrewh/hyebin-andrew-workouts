@@ -1500,7 +1500,9 @@ function viewSessionDetail(id){
   const s=S.sessions.find(x=>x.id===id);
   if(!s){ route.view="list"; return viewHistory(); }
   let html=`<button class="btn ghost sm" style="width:auto;padding-left:0;margin-bottom:6px" onclick="route.view='list';route.id=null;render()">‹ History</button>`;
-  html+=`<div class="h1" style="margin-bottom:4px">${escapeHtml(s.workoutName)}</div>`;
+  html+=`<div class="row between" style="align-items:flex-start;gap:10px">
+    <div class="h1" style="margin-bottom:4px">${escapeHtml(s.workoutName)}</div>
+    <button class="btn ghost sm" style="width:auto;flex:0 0 auto" onclick="renameSession('${s.id}')">✏️ Rename</button></div>`;
   html+=`<div class="sub" style="margin:0 2px 14px">${fmtDate(s.endedAt)}${s.startedAt?` · ${timeOf(s.startedAt)}–${timeOf(s.endedAt)}`:""} · ⏱ ${fmtDur(s.durationSec)} · ${sessionVolume(s).toLocaleString()} ${S.units}</div>`;
   const runs=ssRuns(s.entries.map(en=>en.ss||null));
   html+=s.entries.map((en,i)=>{
@@ -2048,6 +2050,25 @@ function cancelWorkout(silent){
   S.active=null; stopSessionTimer(); stopRest(); save();
   if(wasJoint) endPlan();
   route.tab="workouts"; route.view="list"; render();
+}
+/* Rename a workout you already did. Only this session — the template it came from and
+   every other session keep their own names, so fixing up one day's label can't rewrite
+   your history. */
+function renameSession(id){
+  const s=S.sessions.find(x=>x.id===id); if(!s) return;
+  openModal(`<h3>Rename workout</h3>
+    <div class="muted" style="margin:-4px 0 14px">Just this session — your template and the rest of your history stay as they are.</div>
+    <div class="field"><label>Name</label>
+      <input class="text" id="sessname" value="${escapeHtml(s.workoutName||"")}" placeholder="e.g. Leg Day"></div>
+    <button class="btn" onclick="saveSessionName('${id}')">Save</button>`);
+  setTimeout(()=>{ const i=document.getElementById("sessname"); if(i){ i.focus(); i.select(); } },60);
+}
+function saveSessionName(id){
+  const s=S.sessions.find(x=>x.id===id);
+  const el=document.getElementById("sessname");
+  const v=((el?el.value:"")||"").trim();
+  if(s && v) s.workoutName=v;
+  save(); closeModal(); render();
 }
 function deleteSession(id){
   if(!confirm("Delete this session permanently?")) return;
