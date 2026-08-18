@@ -229,6 +229,7 @@
   .libitem{display:flex;align-items:center;justify-content:space-between;padding:13px 12px;border-radius:12px;
     background:var(--card2);border:1px solid var(--line);margin-bottom:8px}
   .libitem:active{border-color:var(--accent)}
+  .libitem.on{border-color:var(--accent);background:rgba(47,123,255,.10)}
   .libitem .nm{font-weight:600}
   .libitem .eq{color:var(--muted);font-size:12px;margin-top:2px}
   .divider{height:1px;background:var(--line);margin:14px 0}
@@ -1846,10 +1847,24 @@ document.addEventListener("input",(e)=>{
 });
 
 let pickTarget={type:"active"};
-function pickExerciseActive(){ pickTarget={type:"active"}; pickExercise(); }
-function pickExerciseForTemplate(id){ pickTarget={type:"template",id:id}; pickExercise(); }
-function pickExercise(){
+/* Two ways to add: one at a time, or pick several and have them go in already linked.
+   pickSsSel holds the picks in tap order — that order becomes the order you rotate
+   through the superset. */
+let pickSs=false, pickSsSel=[];
+function pickExerciseActive(){ pickTarget={type:"active"}; pickSs=false; pickSsSel=[]; pickExercise(); }
+function pickExerciseForTemplate(id){ pickTarget={type:"template",id:id}; pickSs=false; pickSsSel=[]; pickExercise(); }
+function setPickMode(ss){
+  const typed=(document.getElementById("exname")||{}).value||"";
+  pickSs=!!ss; if(!pickSs) pickSsSel=[];
+  pickExercise(typed);
+}
+function pickExercise(prefill){
   openModal(`<h3>Add exercise</h3>
+    <div class="opts" style="margin:-2px 0 14px">
+      <button class="opt ${pickSs?'':'on'}" onclick="setPickMode(false)">One exercise</button>
+      <button class="opt ${pickSs?'on':''}" onclick="setPickMode(true)">🔗 Superset</button></div>
+    ${pickSs?`<div class="muted" style="margin:-8px 2px 14px;font-size:13px">Pick two or more — they go in linked, and you only get the full rest after the last one.</div>`:""}
+    <div id="sspicked"></div>
     <div class="field"><label>Exercise name</label>
       <input class="text" id="exname" placeholder="Start typing… e.g. Bench Press" autocomplete="off" oninput="onExType()"></div>
     <div id="suggest"></div>
@@ -1862,14 +1877,66 @@ function pickExercise(){
         <button class="opt on" onclick="pick(this,'assistOpts')" data-v="Standard">Standard</button>
         <button class="opt" onclick="pick(this,'assistOpts')" data-v="Assisted">Assisted</button></div>
       <div class="muted" style="margin:6px 2px 0;font-size:13px">Assisted = the number you log is help (machine or band). Less of it counts as progress.</div></div>
-    <button class="btn" id="createBtn" onclick="createAndAddExercise()">+ Add exercise</button>`,true);
-  setTimeout(()=>{ const i=document.getElementById("exname"); if(i){ i.focus(); } onExType(); },60);
+    <button class="btn" id="createBtn" onclick="createAndAddExercise()">+ Add exercise</button>
+    <button class="btn" id="ssAddBtn" style="display:none;margin-top:10px;background:var(--accent)"
+      onclick="addSupersetSelection()">🔗 Add as superset</button>`,true);
+  setTimeout(()=>{
+    const i=document.getElementById("exname");
+    if(i){ if(prefill) i.value=prefill; i.focus(); }
+    onExType(); renderSsPicked();
+  },60);
+}
+/* the running selection, in the order you tapped it */
+function ssPickToggle(exId){
+  const i=pickSsSel.indexOf(exId);
+  if(i>=0) pickSsSel.splice(i,1); else pickSsSel.push(exId);
+  onExType(); renderSsPicked();
+}
+function renderSsPicked(){
+  const box=document.getElementById("sspicked");
+  const btn=document.getElementById("ssAddBtn");
+  if(btn){
+    btn.style.display = pickSs ? "block" : "none";
+    btn.textContent = `🔗 Add as superset${pickSsSel.length?` (${pickSsSel.length})`:""}`;
+    btn.disabled = pickSsSel.length<2;
+    btn.style.opacity = pickSsSel.length<2 ? ".5" : "1";
+  }
+  if(!box) return;
+  if(!pickSs || !pickSsSel.length){ box.innerHTML=""; return; }
+  box.innerHTML = `<div class="field"><label>In this superset — tap to drop</label><div>${
+    pickSsSel.map((id,i)=>{ const e=exById(id);
+      return `<span class="pill" style="cursor:pointer" onclick="ssPickToggle('${id}')">${i+1}. ${escapeHtml(e?exDisplay(e):"Exercise")} ✕</span>`;
+    }).join("")}</div></div>`;
+}
+// add the whole group at once, sharing one group id so they're linked from the first set
+function addSupersetSelection(){
+  if(pickSsSel.length<2) return;
+  const gid=uid();
+  if(pickTarget.type==="template"){
+    const w=workoutById(pickTarget.id);
+    if(w){
+      w.ss=w.ss||{};
+      pickSsSel.forEach(id=>{ if(!w.exerciseIds.includes(id)) w.exerciseIds.push(id); w.ss[id]=gid; });
+      ssNormalizeTpl(w);
+    }
+    pickSs=false; pickSsSel=[]; save(); closeModal(); render(); return;
+  }
+  if(!S.active){ alert("Start a workout first."); return; }
+  const fresh=pickSsSel.filter(id=>!S.active.entries.some(en=>en.exerciseId===id));
+  fresh.forEach(id=>{ if(S.active.removed) delete S.active.removed[id]; });
+  // already-in-the-session picks just join the group where they are
+  pickSsSel.forEach(id=>{ const en=S.active.entries.find(e=>e.exerciseId===id); if(en) en.ss=gid; });
+  S.active.entries.unshift(...fresh.map(id=>({exerciseId:id, sets:seedSets(id), addedAt:Date.now(), ss:gid})));
+  ssNormalizeActive();
+  pendingScroll=0; pickSs=false; pickSsSel=[];
+  save(); closeModal(); render(); markListChanged();
 }
 function libRow(ex){
-  return `<div class="libitem" onclick="addExistingExercise('${ex.id}')">
+  const at = pickSs ? pickSsSel.indexOf(ex.id) : -1;
+  return `<div class="libitem${at>=0?' on':''}" onclick="${pickSs?`ssPickToggle('${ex.id}')`:`addExistingExercise('${ex.id}')`}">
     <div><div class="nm">${escapeHtml(ex.name)}</div>
     <div class="eq">${[(ex.angle&&ex.angle!=="None")?ex.angle:null,ex.equipment,isAssisted(ex)?"assisted":null].filter(Boolean).join(" · ")}</div></div>
-    <div class="muted">＋ add</div></div>`;
+    <div class="muted">${pickSs ? (at>=0?`${at+1} ✓`:"＋ pick") : "＋ add"}</div></div>`;
 }
 // live type-ahead: show saved exercises that match as you type
 function onExType(){
@@ -1894,9 +1961,10 @@ function onExType(){
     ao.querySelectorAll(".opt").forEach(o=>o.classList.toggle("on", o.dataset.v===want));
   }
   const btn=document.getElementById("createBtn");
-  if(btn) btn.textContent = !raw ? "+ Add exercise"
-    : dupe ? `+ Add “${dupe.name}”`            // same lift, different spelling — reuse it
-           : `+ Add “${titleCaseName(raw)}” as new`;
+  const verb = pickSs ? "Pick" : "Add";
+  if(btn) btn.textContent = !raw ? (pickSs?"+ Pick exercise":"+ Add exercise")
+    : dupe ? `+ ${verb} “${dupe.name}”`        // same lift, different spelling — reuse it
+           : `+ ${verb} “${titleCaseName(raw)}” as new`;
 }
 function pick(btn,group){
   document.querySelectorAll(`#${group} .opt`).forEach(o=>o.classList.remove("on")); btn.classList.add("on");
@@ -1925,11 +1993,13 @@ function createAndAddExercise(){
   const equipment=selected("equipOpts")||"Barbell", angle=selected("angleOpts")||"None";
   // "bench press" when Bench Press already exists → reuse it, don't fork the library
   const existing=findExercise(name, equipment, angle);
-  if(existing){ addExistingExercise(existing.id); return; }
+  const land = id => { if(pickSs){ const i=document.getElementById("exname"); if(i) i.value=""; ssPickToggle(id); } else addExistingExercise(id); };
+  if(existing){ land(existing.id); return; }
   const ex={id:uid(),name:canonicalExName(name),equipment,angle,goal:null,
             assisted: selected("assistOpts")==="Assisted"};
   S.exercises.push(ex);
-  addExistingExercise(ex.id);
+  save();
+  land(ex.id);
 }
 
 /* ----- finish / cancel ----- */
