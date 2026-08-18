@@ -1034,7 +1034,7 @@ function applyPlan(){
     if(!exById(exId)) return;
     if(S.active.entries.some(en=>en.exerciseId===exId)) return;
     if(tomb[exId] && tomb[exId]>=theirAt) return;          // my removal is newer — stay removed
-    S.active.entries.push({exerciseId:exId, sets:seedSets(exId), addedAt:Date.now()});
+    S.active.entries.unshift({exerciseId:exId, sets:seedSets(exId), addedAt:Date.now()});
     delete tomb[exId];
     changed=true;
   });
@@ -1812,6 +1812,7 @@ function toggleDone(ei,si){
     if((st.reps===""||st.reps==null) && gh.r!=null && gh.r!=="") st.reps=gh.r;
     /* Superset: you're not resting yet — you're walking to the next exercise. Warmups
        ramp on their own, so they always take the normal rest. */
+    restExId = en.exerciseId;               // names the rest on the lock screen / banner
     const r = st.warmup ? null : activeRuns()[ei];
     if(r && !r.last){
       const nx=S.active.entries[ei+1], nex=nx?exById(nx.exerciseId):null;
@@ -1906,8 +1907,9 @@ function addExistingExercise(exId){
   }
   if(!S.active){ alert("Start a workout first."); return; }
   if(S.active.entries.some(en=>en.exerciseId===exId)){ closeModal(); render(); return; }  // already in this session
-  S.active.entries.push({exerciseId:exId, sets:seedSets(exId), addedAt:Date.now()});
+  S.active.entries.unshift({exerciseId:exId, sets:seedSets(exId), addedAt:Date.now()});
   if(S.active.removed) delete S.active.removed[exId];   // re-adding clears my tombstone
+  pendingScroll=0;                 // it's the top card now — land on it, don't hunt for it
   save(); closeModal(); render();
   if(!applyingPlan) markListChanged();   // share the added exercise with your partner
 }
@@ -2222,7 +2224,7 @@ function tickSession(){
 
 let rest={running:false,endAt:0,startAt:0,timer:null};
 // set by toggleDone when the countdown is a superset hand-off ("next: Cable Row")
-let restLabel="";
+let restLabel="", restExId=null;
 // iOS only allows audio that's unlocked by a user gesture. The rest beep fires from a
 // timer, so prime/resume the AudioContext here (startRest runs from the ✓ tap).
 function unlockAudio(){
@@ -2434,7 +2436,7 @@ function npArt(){
 function curExName(){
   try{
     if(!S.active) return curProfile().name;
-    const en=S.active.entries[S.active.entries.length-1];
+    const en=S.active.entries.find(e=>e.exerciseId===restExId) || S.active.entries[0];
     const ex=en&&exById(en.exerciseId);
     return ex?exDisplay(ex):curProfile().name;
   }catch(e){ return "Workout"; }

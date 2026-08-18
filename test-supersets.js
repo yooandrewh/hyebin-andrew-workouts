@@ -76,6 +76,9 @@ function reset(dev, pid){
   S.workouts=[]; S.sessions=[]; S.active=null; dev.save();
 }
 function add(dev, exId){ dev.setPickTarget({type:"active"}); dev.addExistingExercise(exId); }
+// an added exercise lands on TOP of the list now, so seed in reverse when a case
+// wants to reason about a known top-to-bottom order
+const addAll=(dev, ids)=>ids.slice().reverse().forEach(id=>add(dev,id));
 const order = dev => dev.getS().active.entries.map(e=>e.exerciseId);
 const groups = dev => dev.getS().active.entries.map(e=>e.ss||null);
 
@@ -99,18 +102,18 @@ console.log("link & unlink (active)");
 {
   const D=makeDevice(SRC,"A"); reset(D,"andrew");
   D.startEmptyWorkout();
-  ["bench","squat","row"].forEach(id=>add(D,id));
+  addAll(D,["bench","squat","row"]);
   D.ssLink(0,2);                                   // bench + row (row is 2 slots away)
   ok(order(D).join()==="bench,row,squat", "linked exercise is pulled adjacent");
   ok(groups(D)[0] && groups(D)[0]===groups(D)[1] && !groups(D)[2], "both carry one group id");
   ok(D.activeRuns()[0].letter==="A" && D.activeRuns()[1].size===2, "renders as superset A of 2");
 
-  add(D,"curl"); D.ssLink(0,3);                    // grow to a triset
-  ok(order(D).join()==="bench,row,curl,squat", "third member lands after the group");
+  add(D,"curl"); D.ssLink(1,0);                    // grow to a triset (bench pulls curl in)
+  ok(order(D).join()==="curl,bench,row,squat", "third member joins the group where it sits");
   ok(D.activeRuns()[2].size===3, "now a triset");
 
   D.ssUnlink(1);                                   // pull the middle one out
-  ok(order(D).join()==="bench,curl,row,squat", "unlinked exercise parks after the group");
+  ok(order(D).join()==="curl,row,bench,squat", "unlinked exercise parks after the group");
   ok(D.activeRuns()[0].size===2 && !groups(D)[2], "remaining two stay a superset");
 
   D.ssUnlink(0);
@@ -122,7 +125,7 @@ console.log("link & unlink (active)");
 console.log("removeEntry");
 {
   const D=makeDevice(SRC,"A"); reset(D,"andrew");
-  D.startEmptyWorkout(); ["bench","row"].forEach(id=>add(D,id));
+  D.startEmptyWorkout(); addAll(D,["bench","row"]);
   D.ssLink(0,1); D.removeEntry(1);
   ok(groups(D).every(g=>!g), "partner removed → the leftover exercise is ungrouped");
 }
@@ -132,7 +135,7 @@ console.log("rest behaviour");
 {
   const D=makeDevice(SRC,"A"); reset(D,"andrew");
   D.getS().restDefault=120; D.getS().restSuperset=15;
-  D.startEmptyWorkout(); ["bench","row"].forEach(id=>add(D,id));
+  D.startEmptyWorkout(); addAll(D,["bench","row"]);
   D.ssLink(0,1);
   const secs = () => Math.round((D.getRest().endAt - NOW)/1000);
 
@@ -197,8 +200,8 @@ console.log("Together sync");
 {
   const A=makeDevice(SRC,"Hyebin"), B=makeDevice(SRC,"Andrew");
   reset(A,"hyebin"); reset(B,"andrew");
-  A.startEmptyWorkout(); ["bench","squat","row"].forEach(id=>add(A,id));
-  B.startEmptyWorkout(); ["bench","squat","row"].forEach(id=>add(B,id));
+  A.startEmptyWorkout(); addAll(A,["bench","squat","row"]);
+  B.startEmptyWorkout(); addAll(B,["bench","squat","row"]);
   A.startTogether(); B.startTogether();
   const relay=(x,y,n=6)=>{ for(let i=0;i<n;i++){ tick(50); x.onPresenceW([y.myPresence()]); tick(50); y.onPresenceW([x.myPresence()]); } };
   relay(A,B);
