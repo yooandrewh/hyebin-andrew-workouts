@@ -2415,18 +2415,24 @@ function startRest(sec){
   stopRest();
   unlockAudio();
   saveDiag({want:sec, startAt:Date.now(), dueAt:Date.now()+sec*1000, hides:0});
-  primeAlarm();                    // load + unlock the fallback element while we have the tap
-  scheduleBell(sec);               // and put the bell itself on the clock
+  // with the keep-alive track running, the alarm is already inside it — anything else
+  // would just double up. Without it (lock audio off) we're foreground-only, where a
+  // primed element and a scheduled bell do work.
+  if(!lockAudioOn()){ primeAlarm(); scheduleBell(sec); }
   rest.running=true; rest.startAt=Date.now(); rest.endAt=rest.startAt+sec*1000;
   rest.timer=setInterval(tickRest,250);
-  startKeepAlive();          // silent track so a locked phone keeps counting
+  startKeepAlive(sec);       // the track that both keeps us alive and rings at the end
   renderRest(); tickRest(); pushPresence();
 }
 function adjustRest(delta){
   if(!rest.running){ restLabel=""; startRest(Math.max(15,S.restDefault+delta)); return; }
   rest.endAt+=delta*1000;
   if(rest.endAt<=Date.now()){ stopRest(); return; }
-  scheduleBell((rest.endAt-Date.now())/1000);   // ±15s moves the bell too
+  // ±15s has to move the alarm too, which means a fresh track. Only possible while we're
+  // on screen — from the lock screen the running track keeps its original timing.
+  const left=(rest.endAt-Date.now())/1000;
+  if(!lockAudioOn()) scheduleBell(left);
+  else if(!document.hidden) startKeepAlive(left);
   tickRest();
 }
 function stopRest(){
@@ -2450,9 +2456,15 @@ function tickRest(){
 function restDone(){
   const d=loadDiag()||{};
   d.firedAt=Date.now(); d.firedHidden=!!document.hidden; saveDiag(d);
-  const played = playAlarm();
-  if(!played) ding();        // no media element available — fall back to the WebAudio beeps
-  else if(navigator.vibrate) navigator.vibrate([180,90,180]);
+  // the keep-alive track is mid-alarm right now — nothing to trigger
+  const inTrack = lockAudioOn() && restAudio && !restAudio.paused && audioMode==="silent";
+  let played=inTrack;
+  if(inTrack){ d.alarm="in track"; saveDiag(d); nowPlayingText("Rest over 💪","Next set"); }
+  else {
+    played = playAlarm();
+    if(!played) ding();      // no media element available — fall back to the WebAudio beeps
+  }
+  if(played && navigator.vibrate) navigator.vibrate([180,90,180]);
   notifyRestDone(played);
 }
 function renderRest(){
@@ -2526,6 +2538,35 @@ function wavURI(samples, rate){
   for(let i=0;i<b.length;i+=8192) bin+=String.fromCharCode.apply(null,b.subarray(i,i+8192));
   return "data:audio/wav;base64,"+btoa(bin);
 }
+/* THE one thing iOS reliably allows on a locked phone: audio that was already playing
+   before the lock. Not a new element, not a scheduled Web Audio node — both were tried and
+   both came out silent. So the whole rest is a single track: near-silence for exactly as
+   long as the countdown, then the alarm. It starts on your tap and never stops, so by the
+   time the alarm arrives it's just the next part of a stream that's already running.
+   Low rate and plain beeps keep 90 seconds of it down to ~1MB. */
+const ALARM_DUR=2.2, TRACK_RATE=6000;
+function writeAlarm(s, rate, at){
+  const beeps=[[0,880],[0.28,880],[0.56,1150],[1.1,880],[1.38,880],[1.66,1150]];
+  beeps.forEach(([off,hz])=>{
+    const start=Math.round((at+off)*rate), len=Math.round(0.22*rate);
+    for(let i=0;i<len && start+i<s.length;i++){
+      const t=i/rate;
+      const env=Math.min(1,t/0.005)*Math.pow(1-i/len,1.6);
+      s[start+i]+=Math.sin(2*Math.PI*hz*t)*0.7*env;
+    }
+  });
+}
+function restTrackWAV(sec){
+  const key="t"+Math.round(sec);
+  if(wavCache[key]) return wavCache[key];
+  const rate=TRACK_RATE, n=Math.round(rate*(Math.max(1,sec)+ALARM_DUR)), s=new Float32Array(n);
+  for(let i=0;i<n;i++) s[i]=Math.sin(2*Math.PI*50*i/rate)*0.0002;   // keep the stream alive
+  writeAlarm(s, rate, Math.max(1,sec));
+  // only keep a couple — these are ~1MB of string each
+  const keys=Object.keys(wavCache).filter(k=>k[0]==="t");
+  if(keys.length>2) delete wavCache[keys[0]];
+  return (wavCache[key]=wavURI(s,rate));
+}
 // a hair above digital silence: dead-silent buffers can get dropped by iOS
 function silentWAV(){
   if(wavCache.silent) return wavCache.silent;
@@ -2595,7 +2636,13 @@ function mkAudio(){
   document.body.appendChild(a);
   return a;
 }
-function ensureRestAudio(){ return restAudio || (restAudio=mkAudio()); }
+function ensureRestAudio(){
+  if(restAudio) return restAudio;
+  restAudio=mkAudio();
+  // the track runs out only after its alarm has rung — that's our cue to let go
+  restAudio.addEventListener("ended",()=>{ if(audioMode==="silent"||audioMode==="alarm"){ audioMode=null; releaseAudio(); } });
+  return restAudio;
+}
 function ensureAlarmAudio(){
   if(alarmAudio) return alarmAudio;
   alarmAudio=mkAudio();
@@ -2634,15 +2681,24 @@ function playSrc(src, loop){
     return true;
   }catch(e){ return false; }
 }
-function startKeepAlive(){
+function startKeepAlive(secLeft){
   if(!lockAudioOn()) return;      // lock audio off = we never take the session, music plays on
   audioSession(wantedSession());
   audioMode="silent";
-  playSrc(silentWAV(), true);
+  const sec=(secLeft==null && rest.running) ? (rest.endAt-Date.now())/1000 : secLeft;
+  // the countdown's own track, alarm baked in at the end
+  playSrc(restTrackWAV(Math.max(1, Math.round(sec||S.restDefault||90))), false);
   wireNowPlaying();
 }
 function stopKeepAlive(){
   if(audioMode==="alarm") return;       // let a firing alarm finish
+  // the track is inside its own alarm — let it ring out, "ended" releases us
+  if(audioMode==="silent" && restAudio && !restAudio.paused && rest.endAt && Date.now()>=rest.endAt-250){
+    audioMode="alarm";
+    clearTimeout(alarmTimer);
+    alarmTimer=setTimeout(()=>{ audioMode=null; releaseAudio(); }, (ALARM_DUR*1000)+800);
+    return;
+  }
   audioMode=null;
   releaseAudio();
 }
