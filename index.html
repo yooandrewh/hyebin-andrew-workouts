@@ -2227,8 +2227,18 @@ let rest={running:false,endAt:0,startAt:0,timer:null};
 let restLabel="", restExId=null;
 // iOS only allows audio that's unlocked by a user gesture. The rest beep fires from a
 // timer, so prime/resume the AudioContext here (startRest runs from the ✓ tap).
+/* Which audio session we're asking iOS for. This — not pausing an element — is what
+   decides whether the music you had playing comes back:
+     ambient  = we mix in, other audio is never interrupted at all
+     playback = we take it over, and we keep playing while the phone is locked
+   So we sit in "ambient" by default and only claim "playback" for as long as the
+   keep-alive track has to survive a locked screen, dropping straight back after. */
+function audioSession(type){
+  try{ if(navigator.audioSession) navigator.audioSession.type=type; }catch(e){}
+}
 function unlockAudio(){
   clearTimeout(ctxIdle); ctxIdle=null;
+  audioSession("ambient");
   try{
     beepCtx = beepCtx || new (window.AudioContext||window.webkitAudioContext)();
     if(beepCtx.state==="suspended") beepCtx.resume();
@@ -2376,7 +2386,8 @@ function playSrc(src, loop){
   }catch(e){ return false; }
 }
 function startKeepAlive(){
-  if(!lockAudioOn()) return;
+  if(!lockAudioOn()) return;      // lock audio off = we never take the session, music plays on
+  audioSession("playback");
   audioMode="silent";
   playSrc(silentWAV(), true);
   wireNowPlaying();
@@ -2402,9 +2413,15 @@ function releaseAudio(){
   }catch(e){}
   restAudio=null;
   clearNowPlaying();
-  // give ding()'s scheduled beeps time to finish before suspending the context
+  audioSession("ambient");        // hand exclusivity back — this is the bit that lets music resume
+  // give ding()'s scheduled beeps time to finish before letting the context go
   clearTimeout(ctxIdle);
-  ctxIdle=setTimeout(()=>{ ctxIdle=null; try{ if(beepCtx && beepCtx.state==="running") beepCtx.suspend(); }catch(e){} }, 1200);
+  ctxIdle=setTimeout(()=>{
+    ctxIdle=null;
+    // close rather than suspend: a suspended context still holds a session open
+    try{ if(beepCtx && beepCtx.state!=="closed" && beepCtx.close) beepCtx.close(); }catch(e){}
+    beepCtx=null;
+  }, 1200);
 }
 function playAlarm(){
   // startRest unlocked this element from a tap, so it can still play once we're backgrounded
