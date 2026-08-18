@@ -704,6 +704,10 @@ function recommend(pid, exId){
       ? `First time — pick a help level you can do <b>${repsLow===repsHigh?repsLow:repsLow+"–"+repsHigh} reps</b> with, then we'll strip it off.`
       : `First time — aim <b>${repsLow===repsHigh?repsLow:repsLow+"–"+repsHigh} reps</b>, then we'll progress next time.` };
 }
+const WEEKDAYS=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+function autoWorkoutName(ts){ return WEEKDAYS[new Date(ts||Date.now()).getDay()]+" Workout"; }
+// a name we generated rather than one the user typed — don't prefill it into "name your template"
+function isAutoName(n){ return !n || /^(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday) Workout$/.test(n) || n==="Quick Workout"; }
 function workoutLastDone(workoutId, profileId){
   for(let i=S.sessions.length-1;i>=0;i--){
     const s=S.sessions[i];
@@ -978,7 +982,7 @@ function myPresence(){
   const defs=ids.map(id=>exById(id)).filter(Boolean)
     .map(e=>({id:e.id,name:e.name,equipment:e.equipment,angle:e.angle,assisted:isAssisted(e)}));
   return { profileId:a.profileId, name:prof?prof.name:"", color:prof?prof.color:"#888", active:true,
-    workoutId:a.workoutId||null, workoutName:(workoutById(a.workoutId)||{}).name||"Quick Workout", startedAt:a.startedAt,
+    workoutId:a.workoutId||null, workoutName:(workoutById(a.workoutId)||{}).name||autoWorkoutName(a.startedAt), startedAt:a.startedAt,
     exercise:ex?exDisplay(ex):"", lastSet, setsDone, restEndsAt: rest.running?rest.endAt:null,
     joint: !!a.joint, listAt: a.listAt||a.startedAt, exerciseIds:ids, exercises:defs,
     removed: a.removed||{}, ss: ssMapOf(a.entries),   // supersets are part of the shared plan
@@ -1155,7 +1159,7 @@ function viewWorkouts(){
     const w=workoutById(S.active.workoutId);
     html += `<div class="card tap" style="border-color:var(--accent)" onclick="openActive()">
       <div class="row between">
-        <div><div class="wname">${escapeHtml(w?w.name:"Quick Workout")}</div>
+        <div><div class="wname">${escapeHtml(w?w.name:autoWorkoutName(S.active.startedAt))}</div>
         <div class="meta" id="resumeDur">In progress · ${fmtDur((Date.now()-S.active.startedAt)/1000)}</div></div>
         <div class="btn sm" style="background:var(--accent)">Resume ▶</div>
       </div></div>`;
@@ -1391,7 +1395,7 @@ function viewActive(){
     <div class="timerbig" id="sessDur">${fmtDur((Date.now()-a.startedAt)/1000)}</div>
     <button class="btn sm" style="background:var(--good);color:#053;width:auto" onclick="finishWorkout()">Finish</button>
   </div>`;
-  html += `<div class="h1" style="margin-bottom:10px">${escapeHtml(w?w.name:"Quick Workout")}</div>`;
+  html += `<div class="h1" style="margin-bottom:10px">${escapeHtml(w?w.name:autoWorkoutName(S.active&&S.active.startedAt))}</div>`;
   if(a.entries.length===0){
     html += `<div class="card" style="text-align:center;color:var(--muted)">No exercises yet — tap “Add Exercise” to start logging.</div>`;
   }
@@ -1722,7 +1726,7 @@ function startWorkout(id){
     const cur=workoutById(S.active.workoutId);
     return confirmDiscard({
       title:"Another workout is in progress",
-      body:`Starting this one throws away “${escapeHtml(cur?cur.name:"Quick Workout")}”${n?` and its <b>${n} logged set${n===1?"":"s"}</b>`:""}.`,
+      body:`Starting this one throws away “${escapeHtml(cur?cur.name:autoWorkoutName(S.active.startedAt))}”${n?` and its <b>${n} logged set${n===1?"":"s"}</b>`:""}.`,
       action:"Hold to discard & switch"
     }, ()=>{ S.active=null; startWorkout(id); });
   }
@@ -1942,7 +1946,7 @@ function finishWorkout(){
     cancelWorkout(true); return;
   }
   const w=workoutById(a.workoutId);
-  const sess={ id:uid(), workoutId:a.workoutId, workoutName:w?w.name:"Quick Workout",
+  const sess={ id:uid(), workoutId:a.workoutId, workoutName:w?w.name:autoWorkoutName(a.startedAt),
     profileId:a.profileId, startedAt:a.startedAt, endedAt:Date.now(),
     durationSec:Math.round((Date.now()-a.startedAt)/1000), entries };
   S.sessions.push(sess);
@@ -1972,7 +1976,7 @@ function maybeOfferTemplate(sess, sourceId){
   }else{
     openModal(`<h3>Save as a template?</h3>
       <div class="muted" style="margin:-4px 0 14px">Save this workout so you can start it again next time.</div>
-      <div class="field"><label>Template name</label><input class="text" id="tplname" value="${escapeHtml(sess.workoutName==="Quick Workout"?"":sess.workoutName)}" placeholder="e.g. Push Day"></div>
+      <div class="field"><label>Template name</label><input class="text" id="tplname" value="${escapeHtml(isAutoName(sess.workoutName)?"":sess.workoutName)}" placeholder="e.g. Push Day"></div>
       <button class="btn" onclick="tplSaveNew()">Save template</button>
       <button class="btn ghost" style="margin-top:6px" onclick="tplDismiss()">No thanks</button>`);
     setTimeout(()=>document.getElementById("tplname")?.focus(),60);
@@ -1989,7 +1993,7 @@ function tplSsFromPending(){
 }
 function tplSaveNewPrompt(){
   openModal(`<h3>Name your template</h3>
-    <div class="field"><label>Template name</label><input class="text" id="tplname" value="${escapeHtml(pendingTpl.name==="Quick Workout"?"":pendingTpl.name)}" placeholder="e.g. Push Day"></div>
+    <div class="field"><label>Template name</label><input class="text" id="tplname" value="${escapeHtml(isAutoName(pendingTpl.name)?"":pendingTpl.name)}" placeholder="e.g. Push Day"></div>
     <button class="btn" onclick="tplSaveNew()">Save template</button>`);
   setTimeout(()=>document.getElementById("tplname")?.focus(),60);
 }
@@ -2180,6 +2184,8 @@ function restSettings(){
       <b>Run while locked</b> plays a silent track so iOS doesn't freeze the countdown when your
       phone locks — you also get the timer on the lock screen (⏭ ±15s, ⏸ skip). It takes over the
       Now Playing slot, so music from other apps pauses.</div>
+    <div class="muted" style="font-size:11px;line-height:1.5;margin-bottom:14px;opacity:.75">
+      <b>Debug</b> — ${diagLine()}</div>
     <button class="btn" onclick="closeModal()">Done</button>`);
 }
 function setRestDefault(sec){
@@ -2225,6 +2231,34 @@ function tickSession(){
 let rest={running:false,endAt:0,startAt:0,timer:null};
 // set by toggleDone when the countdown is a superset hand-off ("next: Cable Row")
 let restLabel="", restExId=null;
+/* A rest that goes wrong goes wrong on a locked phone, where nothing is observable.
+   So each rest leaves a breadcrumb — kept out of S on purpose, this is local-only and
+   never syncs. Shown at the bottom of the rest-timer sheet. */
+const DIAG_KEY="liftlog.diag";
+// installed to the Home Screen? iOS only grants notifications to installed web apps
+function isInstalled(){
+  try{ return !!(window.navigator.standalone
+    || (typeof matchMedia==="function" && matchMedia("(display-mode: standalone)").matches)); }catch(e){ return false; }
+}
+function loadDiag(){ try{ return JSON.parse(localStorage.getItem(DIAG_KEY)||"null"); }catch(e){ return null; } }
+function saveDiag(d){ try{ localStorage.setItem(DIAG_KEY, JSON.stringify(d)); }catch(e){} }
+function diagLine(){
+  const d=loadDiag();
+  const now=[
+    "session " + (navigator.audioSession ? (navigator.audioSession.type||"?") : "unsupported"),
+    "notify " + notifyPerm(),
+    swReg ? "sw ok" : "no sw",
+    isInstalled() ? "installed" : "in browser"
+  ].join(" · ");
+  if(!d) return now+"<br>no rest recorded yet";
+  const secs=(a,b)=> (a&&b) ? Math.round((b-a)/1000)+"s" : "—";
+  const late = (d.firedAt&&d.dueAt) ? Math.round((d.firedAt-d.dueAt)/1000) : null;
+  return now+"<br>last rest: asked for "+(d.want||"?")+"s, "
+    + (d.firedAt ? "fired "+(late===0?"on time":(late>0?late+"s late":Math.abs(late)+"s early")) : "never fired")
+    + " · locked "+(d.hides||0)+"× ("+secs(d.hidAt,d.showAt||d.firedAt)+" away)"
+    + " · while "+(d.firedHidden?"locked":"on screen")
+    + "<br>banner: "+(d.notify||"—");
+}
 // iOS only allows audio that's unlocked by a user gesture. The rest beep fires from a
 // timer, so prime/resume the AudioContext here (startRest runs from the ✓ tap).
 /* Which audio session we're asking iOS for. This — not pausing an element — is what
@@ -2236,6 +2270,19 @@ let restLabel="", restExId=null;
 function audioSession(type){
   try{ if(navigator.audioSession) navigator.audioSession.type=type; }catch(e){}
 }
+/* We only need to be exclusive while the phone is actually locked (or we're in another
+   app) — that's the only time iOS would otherwise freeze the countdown. On screen, we
+   mix, so your music just keeps playing through the whole rest. */
+function wantedSession(){ return document.hidden ? "playback" : "ambient"; }
+document.addEventListener("visibilitychange", ()=>{
+  const d=loadDiag();
+  if(rest.running && d){ d[document.hidden?"hidAt":"showAt"]=Date.now(); d.hides=(d.hides||0)+(document.hidden?1:0); saveDiag(d); }
+  if(!rest.running && !restAudio) return;
+  audioSession(wantedSession());
+  // going to the lock screen: make sure the keep-alive is actually rolling, or iOS
+  // suspends us and the countdown (and its notification) never lands
+  if(document.hidden && rest.running && lockAudioOn() && audioMode==="silent") playSrc(silentWAV(), true);
+});
 function unlockAudio(){
   clearTimeout(ctxIdle); ctxIdle=null;
   audioSession("ambient");
@@ -2247,6 +2294,7 @@ function unlockAudio(){
 function startRest(sec){
   stopRest();
   unlockAudio();
+  saveDiag({want:sec, startAt:Date.now(), dueAt:Date.now()+sec*1000, hides:0});
   rest.running=true; rest.startAt=Date.now(); rest.endAt=rest.startAt+sec*1000;
   rest.timer=setInterval(tickRest,250);
   startKeepAlive();          // silent track so a locked phone keeps counting
@@ -2276,6 +2324,8 @@ function tickRest(){
 }
 // rest is over: make noise (audible from a locked screen) and post a banner
 function restDone(){
+  const d=loadDiag()||{};
+  d.firedAt=Date.now(); d.firedHidden=!!document.hidden; saveDiag(d);
   const played = playAlarm();
   if(!played) ding();        // no media element available — fall back to the WebAudio beeps
   else if(navigator.vibrate) navigator.vibrate([180,90,180]);
@@ -2387,7 +2437,7 @@ function playSrc(src, loop){
 }
 function startKeepAlive(){
   if(!lockAudioOn()) return;      // lock audio off = we never take the session, music plays on
-  audioSession("playback");
+  audioSession(wantedSession());
   audioMode="silent";
   playSrc(silentWAV(), true);
   wireNowPlaying();
@@ -2508,14 +2558,20 @@ async function initNotify(){
 }
 function notifyPerm(){ return ("Notification" in window) ? Notification.permission : "unsupported"; }
 function notifyRestDone(){
-  if(!notifyOn() || notifyPerm()!=="granted" || !swReg) return;
+  const d=loadDiag()||{};
+  const why = !notifyOn() ? "turned off"
+            : notifyPerm()!=="granted" ? "permission: "+notifyPerm()
+            : !swReg ? "no service worker" : null;
+  if(why){ d.notify=why; saveDiag(d); return; }
   try{
     swReg.showNotification("Rest over 💪", {
       body: curExName()+" — time for your next set.",
       tag:"rest-done", renotify:true, silent:false,
       vibrate:[180,90,180], data:{ at:Date.now() }
-    });
-  }catch(e){}
+    }).then(()=>{ const x=loadDiag()||{}; x.notify="sent"; saveDiag(x); })
+      .catch(err=>{ const x=loadDiag()||{}; x.notify="rejected: "+err; saveDiag(x); });
+    d.notify="requested"; saveDiag(d);
+  }catch(e){ d.notify="threw: "+e; saveDiag(d); }
 }
 function clearRestNotifications(){
   if(!swReg || !swReg.getNotifications) return;

@@ -22,12 +22,14 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # need the full history to count commits for the build number
 
-      # Stamp the build version (date + short commit SHA) so the app footer
-      # always shows which build is live. Runs on every push automatically.
+      # Stamp the build number — just the commit count, so the badge reads "v128"
+      # and is easy to say out loud when reporting a bug. Runs on every push.
       - name: Stamp version
         run: |
-          echo "window.APP_VERSION = \"$(date -u +%Y.%m.%d) · ${GITHUB_SHA::7}\";" > version.js
+          echo "window.APP_VERSION = \"$(git rev-list --count HEAD)\";" > version.js
           # bust the cached version.js whenever the HTML itself is fresh
           sed -i "s|<script src=\"version.js[^\"]*\">|<script src=\"version.js?v=${GITHUB_SHA::7}\">|" index.html
           echo "Stamped: $(cat version.js)"
