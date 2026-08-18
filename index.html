@@ -2459,7 +2459,15 @@ function restDone(){
   // the keep-alive track is mid-alarm right now — nothing to trigger
   const inTrack = lockAudioOn() && restAudio && !restAudio.paused && audioMode==="silent";
   let played=inTrack;
-  if(inTrack){ d.alarm="in track"; saveDiag(d); nowPlayingText("Rest over 💪","Next set"); }
+  if(inTrack){
+    // the alarm is about to sound out of a track that's been mixing quietly all rest — on a
+    // muted phone that's inaudible, so take the session for the couple of seconds it rings
+    if(ringOnSilentOn()) audioSession("playback");
+    d.alarm="in track"; d.alarmCat=(ringOnSilentOn()?"playback":wantedSession())
+      + "→" + ((navigator.audioSession&&navigator.audioSession.type)||"n/a");
+    saveDiag(d);
+    nowPlayingText("Rest over 💪","Next set");
+  }
   else {
     played = playAlarm();
     if(!played) ding();      // no media element available — fall back to the WebAudio beeps
