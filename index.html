@@ -1406,6 +1406,7 @@ function viewActive(){
   html += `<div class="row between" style="align-items:flex-start;gap:10px;margin-bottom:10px">
     <div class="h1" style="margin:0">${escapeHtml(activeName(a))}</div>
     <button class="btn ghost sm" style="width:auto;flex:0 0 auto" onclick="renameActive()">✏️ Rename</button></div>`;
+  html += `<button class="btn sec" style="margin-bottom:12px" onclick="pickExerciseActive()">+ Add Exercise</button>`;
   if(a.entries.length===0){
     html += `<div class="card" style="text-align:center;color:var(--muted)">No exercises yet — tap “Add Exercise” to start logging.</div>`;
   }
@@ -1466,7 +1467,6 @@ function viewActive(){
     </div>${ssClose(r)}`;
   });
 
-  html += `<button class="btn sec" onclick="pickExerciseActive()">+ Add Exercise</button>`;
   html += `<button class="btn sec" style="margin-top:10px" onclick="restSettings()">⏱ Rest timer: ${fmtClock(S.restDefault||90)}${
     runs.some(Boolean)?` · superset ${ssRest()>0?fmtClock(ssRest()):"none"}`:""}</button>`;
   // a quiet text link, not a big red block — it's too easy to hit while scrolling
