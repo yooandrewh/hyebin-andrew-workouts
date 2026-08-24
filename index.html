@@ -357,7 +357,7 @@ function load(){
     restAlert:"sound", // device-only: "sound" | "vibrate" | "silent" — how the rest alert fires
     notifyRest:true, // device-only: banner when rest ends (needs notification permission)
     lockAudio:true,   // device-only: keep the countdown alive while the phone is locked
-    ringOnSilent:true // device-only: bell rings through the mute switch (costs a 3s music pause)
+    ringOnSilent:false // device-only: opt-in. ON takes exclusive audio (stops music); OFF only ever mixes
   };
 }
 function save(){ localStorage.setItem(STORE_KEY, JSON.stringify(S)); scheduleCloudPush(); }
@@ -2398,10 +2398,13 @@ function restSettings(){
       ${notifHint}<br>
       <b>Run while locked</b> plays a silent track so iOS doesn't freeze the countdown when your
       phone locks — you also get the timer on the lock screen (⏭ ±15s, ⏸ skip).<br>
-      <b>Ring on silent</b> lets the bell through the mute switch. iOS only allows that for
-      audio that takes over the sound, so your music pauses for the few seconds the bell rings,
-      then comes back. Turn it off and the bell mixes politely over your music — but a muted
-      phone won't play it at all.</div>
+      <b>Ring on silent</b> is <b>off</b> by default, and off means the app <b>only ever mixes</b> —
+      music and podcasts are never paused, ducked or stopped. The trade-off: a phone on mute
+      won't play the bell at all.<br>
+      Turning it on lets the bell through the mute switch, but iOS only allows that for audio
+      that takes over the sound — so your music pauses, and while your phone is <b>locked</b> it
+      stays paused for the whole rest, not just the bell. Prefer <b>Vibrate only</b> or
+      <b>Silent</b> above if you want an alert that never touches your music.</div>
     <div class="muted" style="font-size:11px;line-height:1.5;margin-bottom:14px;opacity:.75">
       <b>Debug</b> — ${diagLine()}</div>
     <button class="btn" onclick="closeModal()">Done</button>`);
@@ -2491,7 +2494,11 @@ function audioSession(type){
 /* We only need to be exclusive while the phone is actually locked (or we're in another
    app) — that's the only time iOS would otherwise freeze the countdown. On screen, we
    mix, so your music just keeps playing through the whole rest. */
-function wantedSession(){ return document.hidden ? "playback" : "ambient"; }
+function wantedSession(){
+  // "playback" is exclusive on iOS — it stops music for as long as we hold it. Only take it
+  // when the user has explicitly asked to ring through the mute switch; otherwise always mix.
+  return (ringOnSilentOn() && document.hidden) ? "playback" : "ambient";
+}
 document.addEventListener("visibilitychange", ()=>{
   const d=loadDiag();
   if(rest.running && d){ d[document.hidden?"hidAt":"showAt"]=Date.now(); d.hides=(d.hides||0)+(document.hidden?1:0); saveDiag(d); }
@@ -2636,7 +2643,7 @@ function lockAudioOn(){ return soundOn() && S.lockAudio!==false; }
 /* iOS silences ordinary app audio on the mute switch — which is how most people carry a
    phone into a gym. "playback" is the one category that rings through it, at the price of
    being exclusive: your music stops for the few seconds the bell takes. */
-function ringOnSilentOn(){ return S.ringOnSilent!==false; }
+function ringOnSilentOn(){ return S.ringOnSilent===true; }
 function notifyOn(){ return S.notifyRest!==false; }
 
 // build a WAV data URI from samples — small enough to make at runtime, and it
