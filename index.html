@@ -255,6 +255,8 @@
   .prbadge{display:inline-block;background:linear-gradient(135deg,#ffb020,#ff8a00);color:#3a2400;
     font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;margin-left:7px;vertical-align:middle}
   .prline{color:var(--warn);font-size:12px;font-weight:700;margin-top:6px}
+  .warnbox{background:rgba(230,150,10,.12);border:1px solid rgba(230,150,10,.45);border-radius:12px;
+    padding:11px 12px;margin-bottom:16px;font-size:12.5px;font-weight:600;line-height:1.55;color:var(--txt)}
   .draghandle{display:inline-block;color:var(--muted);font-size:16px;line-height:1;margin-right:7px;
     cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none;vertical-align:1px;padding:2px 3px}
   .sidetag{display:inline-block;background:var(--card2);border:1px solid var(--line);color:var(--muted);
@@ -355,6 +357,7 @@ function load(){
     restDefault:90,
     restSuperset:15,  // shorter rest between the exercises inside a superset (0 = none)
     restAlert:"sound", // device-only: "sound" | "vibrate" | "silent" — how the rest alert fires
+    buzzPattern:"double", // device-only: which vibration pattern the rest alert uses
     notifyRest:true, // device-only: banner when rest ends (needs notification permission)
     lockAudio:true,   // device-only: keep the countdown alive while the phone is locked
     ringOnSilent:false // device-only: opt-in. ON takes exclusive audio (stops music); OFF only ever mixes
@@ -2377,6 +2380,12 @@ function restSettings(){
     <div class="muted" style="font-size:12px;margin-bottom:18px">Inside a superset you go almost straight
       to the next exercise — this is the short gap in between. The full ${fmtClock(cur)} runs only after the
       last exercise in the group.</div>
+    ${(alertMode()==='sound' && !ringOnSilentOn()) ? `<div class="warnbox">
+      <b>Phone on silent?</b> Then you'll hear nothing. A mixed bell can't play through the mute
+      switch — that's an iOS rule, not a setting. On a permanently-muted phone the only alert that
+      works <i>without</i> pausing your music is the <b>notification banner</b>, so switch to
+      <b>Vibrate only</b> or <b>Silent</b> below and make sure notifications are allowed.
+    </div>` : ""}
     <div style="font-weight:800;margin-bottom:8px">When rest ends</div>
     <div class="opts" style="margin-bottom:8px">
       <button class="opt ${alertMode()==='sound'?'on':''}" onclick="setAlertMode('sound')">🔊 Sound</button>
@@ -2388,6 +2397,17 @@ function restSettings(){
         ? "Plays a bell. This briefly takes over audio, so music or a podcast will duck."
         : "No audio at all — your music keeps playing untouched. You still get the banner below."}
       ${alertMode()!=='sound' ? "<br><b>On iPhone the web can't vibrate the phone directly</b> — the banner is what buzzes, so keep notifications on and let iOS handle the buzz." : ""}
+    </div>
+    <div style="font-weight:800;margin-bottom:8px">Vibration</div>
+    <div class="opts" style="margin-bottom:8px">
+      ${Object.keys(BUZZ_PATTERNS).map(k=>`<button class="opt ${buzzPattern()===k?'on':''}"
+        onclick="setBuzzPattern('${k}')">${BUZZ_PATTERNS[k].label}</button>`).join("")}
+      <button class="opt" onclick="testBuzz()">▶ Test</button>
+    </div>
+    <div class="muted" style="font-size:12px;margin-bottom:16px">
+      ${("vibrate" in navigator)
+        ? "Tap one to feel it."
+        : "<b>This phone can't be vibrated from the web</b> — iOS gives no such control to web apps. The pattern below is still sent with the notification, but iOS uses its own buzz. Your phone's Settings → Sounds &amp; Haptics decides what that feels like."}
     </div>
     <div class="opts" style="margin-bottom:8px">
       <button class="opt ${notifOK?'on':''}" onclick="toggleNotify()">🔔 ${notifLbl}</button>
@@ -2577,7 +2597,7 @@ function restDone(){
     played = playAlarm();
     if(!played) ding();      // no media element available — fall back to the WebAudio beeps
   }
-  if(played || !soundOn()) buzz([180,90,180]);   // buzz even with sound off (Android)
+  if(played || !soundOn()) restBuzz();   // buzz even with sound off (Android)
   notifyRestDone(played);
 }
 function renderRest(){
@@ -2593,7 +2613,7 @@ function renderRest(){
 }
 function ding(){
   try{
-    buzz([180,90,180]);
+    restBuzz();
     if(!soundOn()) return;
     beepCtx = beepCtx || new (window.AudioContext||window.webkitAudioContext)();
     if(beepCtx.state==="suspended") beepCtx.resume();
@@ -2631,6 +2651,19 @@ function ding(){
 let restAudio=null, alarmAudio=null, audioMode=null, npSec=-1, npWired=false, swReg=null, wavCache={};
 let alarmTimer=null, ctxIdle=null;
 
+const BUZZ_PATTERNS={
+  short:{label:"Short",   pat:[60]},
+  double:{label:"Double", pat:[120,90,120]},
+  long:{label:"Long",     pat:[450]},
+  triple:{label:"Triple", pat:[90,70,90,70,90]},
+  heartbeat:{label:"Heartbeat", pat:[110,60,110,320,110,60,110]},
+  sos:{label:"Escalating",pat:[60,60,120,60,240,60,400]}
+};
+function buzzPattern(){ return BUZZ_PATTERNS[S.buzzPattern] ? S.buzzPattern : "double"; }
+function buzzPat(){ return BUZZ_PATTERNS[buzzPattern()].pat; }
+function restBuzz(){ buzz(buzzPat()); }
+function setBuzzPattern(k){ if(!BUZZ_PATTERNS[k]) return; S.buzzPattern=k; save(); buzz(BUZZ_PATTERNS[k].pat); restSettings(); }
+function testBuzz(){ buzz(buzzPat()); }
 function alertMode(){ return S.restAlert||"sound"; }
 // sound off keeps music/podcasts untouched — we never take an audio session at all
 function soundOn(){ return alertMode()==="sound"; }
@@ -2971,7 +3004,7 @@ function notifyRestDone(bellPlaying){
          banner in favour of the bell left a locked phone making no sound at all, so the
          chime stays until the bell is confirmed audible on a real device. */
       silent: false,
-      vibrate:[180,90,180], data:{ at:Date.now() }
+      vibrate:buzzPat(), data:{ at:Date.now() }
     }).then(()=>{ const x=loadDiag()||{}; x.notify="sent"; saveDiag(x); })
       .catch(err=>{ const x=loadDiag()||{}; x.notify="rejected: "+err; saveDiag(x); });
     d.notify="requested"; saveDiag(d);
@@ -3171,6 +3204,7 @@ Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGa
   plateCalc,plateType,plateBump,plateSetWeight,plateBar,
   exerciseOpts,ssLink,ssUnlink,tplExOpts,ssLinkTpl,ssUnlinkTpl,setRestSuperset,
   openExerciseProgress,exerciseSeries,trendOf,decomposeByExercise,consistency,confidenceOf,
+  setBuzzPattern,testBuzz,buzzPattern,restBuzz,
   setAlertMode,alertMode,soundOn,buzz,moveEntry,moveEntryUp,moveEntryDown,setPerSide,perSide});
 </script>
 
