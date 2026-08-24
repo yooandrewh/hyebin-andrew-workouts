@@ -255,6 +255,12 @@
   .prbadge{display:inline-block;background:linear-gradient(135deg,#ffb020,#ff8a00);color:#3a2400;
     font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;margin-left:7px;vertical-align:middle}
   .prline{color:var(--warn);font-size:12px;font-weight:700;margin-top:6px}
+  .draghandle{display:inline-block;color:var(--muted);font-size:16px;line-height:1;margin-right:7px;
+    cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none;vertical-align:1px;padding:2px 3px}
+  .sidetag{display:inline-block;background:var(--card2);border:1px solid var(--line);color:var(--muted);
+    font-size:10.5px;font-weight:800;padding:1px 6px;border-radius:999px;margin-left:7px;vertical-align:2px}
+  .exrow.dragging{opacity:.55;transform:scale(.98);box-shadow:0 10px 26px rgba(0,0,0,.28)}
+  .exrow.dropzone{outline:2px dashed var(--accent);outline-offset:2px}
   /* ===== Progress / analysis battery ===== */
   .anacard{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:13px 14px;
     margin-bottom:12px;box-shadow:var(--shadow)}
@@ -348,6 +354,7 @@ function load(){
     active:null,      // {workoutId,profileId,startedAt,entries:[{exerciseId,sets:[{weight,reps,rpe,done}]}]}
     restDefault:90,
     restSuperset:15,  // shorter rest between the exercises inside a superset (0 = none)
+    restAlert:"sound", // device-only: "sound" | "vibrate" | "silent" — how the rest alert fires
     notifyRest:true, // device-only: banner when rest ends (needs notification permission)
     lockAudio:true,   // device-only: keep the countdown alive while the phone is locked
     ringOnSilent:true // device-only: bell rings through the mute switch (costs a 3s music pause)
@@ -723,11 +730,15 @@ function workoutLastDone(workoutId, profileId){
   }
   return null;
 }
+// a dumbbell exercise logged per-hand moves twice the load — count both for volume
+function perSide(exOrId){ const e=(typeof exOrId==="string")?exById(exOrId):exOrId; return !!(e&&e.perSide); }
+function loadFactor(exId){ return perSide(exId)?2:1; }
 function sessionVolume(sess){
   let v=0;
   sess.entries.forEach(en=>{
     if(isAssistedId(en.exerciseId)) return;   // that number is help, not load — counting it inverts the meaning
-    en.sets.forEach(st=>{ if(st.warmup) return; v += (Number(st.weight)||0)*(Number(st.reps)||0); });
+    const f=loadFactor(en.exerciseId);
+    en.sets.forEach(st=>{ if(st.warmup) return; v += (Number(st.weight)||0)*f*(Number(st.reps)||0); });
   });
   return Math.round(v);
 }
@@ -1285,6 +1296,58 @@ function ssUnlink(ei){
   save(); closeModal(); render(); markListChanged();
 }
 /* the "⋯" menu on an exercise in the active workout */
+// reorder exercises; supersets regroup from whatever ends up adjacent
+/* Touch/mouse drag to reorder. The handle owns the gesture (touch-action:none) so the
+   page still scrolls normally everywhere else. We only commit on release. */
+let dragFrom=null, dragTo=null;
+function exRows(){ return [...document.querySelectorAll(".exrow")]; }
+function dragStart(e){
+  const h=e.target.closest?e.target.closest("[data-drag]"):null; if(!h) return;
+  if(!S.active) return;
+  dragFrom=+h.dataset.drag; dragTo=dragFrom;
+  const card=h.closest(".exrow"); if(card) card.classList.add("dragging");
+  buzz(15);
+  e.preventDefault();
+  window.addEventListener("touchmove",dragMove,{passive:false});
+  window.addEventListener("touchend",dragEnd);
+  window.addEventListener("mousemove",dragMove);
+  window.addEventListener("mouseup",dragEnd);
+}
+function dragMove(e){
+  if(dragFrom==null) return;
+  e.preventDefault();
+  const y=(e.touches&&e.touches[0]?e.touches[0].clientY:e.clientY);
+  let target=dragFrom;
+  exRows().forEach(row=>{
+    const i=+row.dataset.ei, b=row.getBoundingClientRect();
+    if(y>b.top && y<b.bottom) target=i;
+  });
+  if(target!==dragTo){
+    dragTo=target; buzz(10);
+    exRows().forEach(row=>row.classList.toggle("dropzone", +row.dataset.ei===dragTo && dragTo!==dragFrom));
+  }
+}
+function dragEnd(){
+  window.removeEventListener("touchmove",dragMove);
+  window.removeEventListener("touchend",dragEnd);
+  window.removeEventListener("mousemove",dragMove);
+  window.removeEventListener("mouseup",dragEnd);
+  const from=dragFrom, to=dragTo;
+  dragFrom=dragTo=null;
+  exRows().forEach(row=>row.classList.remove("dragging","dropzone"));
+  if(from!=null && to!=null && from!==to){ buzz(25); moveEntry(from,to); }
+}
+document.addEventListener("touchstart",dragStart,{passive:false});
+document.addEventListener("mousedown",dragStart);
+
+function moveEntry(from,to){
+  const a=S.active; if(!a) return;
+  if(to<0||to>=a.entries.length||from===to) return;
+  const [row]=a.entries.splice(from,1); a.entries.splice(to,0,row);
+  save(); markListChanged(); render();
+}
+function moveEntryUp(ei){ buzz(20); moveEntry(ei,ei-1); closeModal(); }
+function moveEntryDown(ei){ buzz(20); moveEntry(ei,ei+1); closeModal(); }
 function exerciseOpts(ei){
   const a=S.active; if(!a) return;
   const en=a.entries[ei]; if(!en) return;
@@ -1311,7 +1374,31 @@ function exerciseOpts(ei){
         : `<div class="muted">Add another (ungrouped) exercise to this workout first.</div>`}
     </div>
     <div class="divider"></div>
+    <div class="field"><label>Order</label>
+      <div class="opts">
+        <button class="opt" ${ei===0?"disabled style=\"opacity:.4\"":""} onclick="moveEntryUp(${ei})">↑ Move up</button>
+        <button class="opt" ${ei===a.entries.length-1?"disabled style=\"opacity:.4\"":""} onclick="moveEntryDown(${ei})">↓ Move down</button>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:7px">Or drag the ⠿ handle on the card.</div>
+    </div>
+    ${(ex && /dumbbell|kettlebell/i.test(ex.equipment||"")) ? `
+    <div class="field"><label>Weight you type</label>
+      <div class="opts">
+        <button class="opt ${!perSide(ex)?'on':''}" onclick="setPerSide('${en.exerciseId}',false)">Total</button>
+        <button class="opt ${perSide(ex)?'on':''}" onclick="setPerSide('${en.exerciseId}',true)">Per dumbbell</button>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:7px">${perSide(ex)
+        ? "You log one dumbbell (e.g. <b>30</b> means a 30 in each hand) — volume counts both, so 30 × 10 scores 600."
+        : "You log the whole load. Two 30s would be logged as <b>60</b>."}</div>
+    </div>` : ""}
+    <div class="divider"></div>
     <button class="btn danger" onclick="removeEntry(${ei})">Remove exercise</button>`);
+}
+function setPerSide(exId, on){
+  const ex=exById(exId); if(!ex) return;
+  ex.perSide=!!on; save(); buzz(20); render();
+  const ei=(S.active?S.active.entries.findIndex(e=>e.exerciseId===exId):-1);
+  if(ei>=0) exerciseOpts(ei); else closeModal();
 }
 
 /* ----- templates: link / unlink (same rules, stored as a map on the template) ----- */
@@ -1417,9 +1504,9 @@ function viewActive(){
     const prev=lastSetsFor(a.profileId, en.exerciseId);
     const rec=recommend(a.profileId, en.exerciseId);
     const r=runs[ei];
-    html += `${ssOpen(r)}<div class="card">
+    html += `${ssOpen(r)}<div class="card exrow" data-ei="${ei}">
       <div class="exhead">
-        <div><div class="exname">${ssBadge(r)}${escapeHtml(ex?ex.name:"Exercise")}</div>
+        <div><div class="exname"><span class="draghandle" data-drag="${ei}">⠿</span>${ssBadge(r)}${escapeHtml(ex?ex.name:"Exercise")}${perSide(ex)?'<span class="sidetag">per DB</span>':''}</div>
           <div class="exsub">${escapeHtml(ex?[(ex.angle&&ex.angle!=="None")?ex.angle:null, ex.equipment, isAssisted(ex)?"assisted":null].filter(Boolean).join(" · "):"")}</div></div>
         <div class="row" style="gap:8px">
           <button class="howbtn" onclick="howTo('${en.exerciseId}')">▶ How-to</button>
@@ -2292,9 +2379,20 @@ function restSettings(){
       last exercise in the group.</div>
     <div style="font-weight:800;margin-bottom:8px">When rest ends</div>
     <div class="opts" style="margin-bottom:8px">
+      <button class="opt ${alertMode()==='sound'?'on':''}" onclick="setAlertMode('sound')">🔊 Sound</button>
+      <button class="opt ${alertMode()==='vibrate'?'on':''}" onclick="setAlertMode('vibrate')">📳 Vibrate only</button>
+      <button class="opt ${alertMode()==='silent'?'on':''}" onclick="setAlertMode('silent')">🤫 Silent</button>
+    </div>
+    <div class="muted" style="font-size:12px;margin-bottom:14px">
+      ${alertMode()==='sound'
+        ? "Plays a bell. This briefly takes over audio, so music or a podcast will duck."
+        : "No audio at all — your music keeps playing untouched. You still get the banner below."}
+      ${alertMode()!=='sound' ? "<br><b>On iPhone the web can't vibrate the phone directly</b> — the banner is what buzzes, so keep notifications on and let iOS handle the buzz." : ""}
+    </div>
+    <div class="opts" style="margin-bottom:8px">
       <button class="opt ${notifOK?'on':''}" onclick="toggleNotify()">🔔 ${notifLbl}</button>
-      <button class="opt ${lockAudioOn()?'on':''}" onclick="toggleLockAudio()">🔒 Run while locked</button>
-      <button class="opt ${ringOnSilentOn()?'on':''}" onclick="toggleRingOnSilent()">🔕 Ring on silent</button>
+      ${alertMode()==='sound'?`<button class="opt ${lockAudioOn()?'on':''}" onclick="toggleLockAudio()">🔒 Run while locked</button>
+      <button class="opt ${ringOnSilentOn()?'on':''}" onclick="toggleRingOnSilent()">🔕 Ring on silent</button>`:""}
     </div>
     <div class="muted" style="font-size:12px;margin-bottom:16px">
       ${notifHint}<br>
@@ -2472,7 +2570,7 @@ function restDone(){
     played = playAlarm();
     if(!played) ding();      // no media element available — fall back to the WebAudio beeps
   }
-  if(played && navigator.vibrate) navigator.vibrate([180,90,180]);
+  if(played || !soundOn()) buzz([180,90,180]);   // buzz even with sound off (Android)
   notifyRestDone(played);
 }
 function renderRest(){
@@ -2488,7 +2586,8 @@ function renderRest(){
 }
 function ding(){
   try{
-    if(navigator.vibrate) navigator.vibrate([180,90,180]);
+    buzz([180,90,180]);
+    if(!soundOn()) return;
     beepCtx = beepCtx || new (window.AudioContext||window.webkitAudioContext)();
     if(beepCtx.state==="suspended") beepCtx.resume();
     const now=beepCtx.currentTime;
@@ -2525,7 +2624,15 @@ function ding(){
 let restAudio=null, alarmAudio=null, audioMode=null, npSec=-1, npWired=false, swReg=null, wavCache={};
 let alarmTimer=null, ctxIdle=null;
 
-function lockAudioOn(){ return S.lockAudio!==false; }
+function alertMode(){ return S.restAlert||"sound"; }
+// sound off keeps music/podcasts untouched — we never take an audio session at all
+function soundOn(){ return alertMode()==="sound"; }
+function buzzOn(){ return alertMode()!=="silent"; }
+function buzz(pat){ if(buzzOn() && navigator.vibrate) navigator.vibrate(pat); }
+function setAlertMode(m){ S.restAlert=(m==="vibrate"||m==="silent")?m:"sound"; save();
+  if(!soundOn()){ try{ cancelBell&&cancelBell(); }catch(e){} try{ releaseAudio&&releaseAudio(); }catch(e){} }
+  buzz(30); restSettings(); render(); }
+function lockAudioOn(){ return soundOn() && S.lockAudio!==false; }
 /* iOS silences ordinary app audio on the mute switch — which is how most people carry a
    phone into a gym. "playback" is the one category that rings through it, at the price of
    being exclusive: your music stops for the few seconds the bell takes. */
@@ -2617,6 +2724,7 @@ function alarmWAV(){
    turned "silent placeholder loop" into a bell ringing for the whole rest. */
 let bellSrc=null, bellScheduled=false;
 function scheduleBell(inSec){
+  if(!soundOn()) return;
   cancelBell();
   if(!beepCtx) return;
   try{
@@ -2665,6 +2773,7 @@ function ensureAlarmAudio(){
    and at zero we only rewind and turn it up — no new playback to start, nothing for iOS
    to refuse. */
 function primeAlarm(){
+  if(!soundOn()) return;
   try{
     const a=ensureAlarmAudio(), src=alarmWAV();
     if(a.src!==src){ a.src=src; a.load(); }
@@ -2679,6 +2788,7 @@ function primeAlarm(){
   }catch(e){}
 }
 function playSrc(src, loop){
+  if(!soundOn()) return false;
   try{
     const a=ensureRestAudio();
     a.loop=!!loop; a.volume=1;
@@ -2736,6 +2846,7 @@ function releaseAudio(){
   }, (BELL_DUR*1000)+800);
 }
 function playAlarm(){
+  if(!soundOn()) return false;
   const a=alarmAudio;
   const note=(v)=>{ const x=loadDiag()||{}; x.alarm=v; saveDiag(x); };
   if(!a){ note("never primed"); return false; }
@@ -3052,7 +3163,8 @@ Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGa
   tplUpdate,tplSaveNewPrompt,tplSaveNew,tplDismiss,gotoSession,howTo,rpeHelp,editGuide,saveGuide,bump,closeModal,workoutById,save,render,
   plateCalc,plateType,plateBump,plateSetWeight,plateBar,
   exerciseOpts,ssLink,ssUnlink,tplExOpts,ssLinkTpl,ssUnlinkTpl,setRestSuperset,
-  openExerciseProgress,exerciseSeries,trendOf,decomposeByExercise,consistency,confidenceOf});
+  openExerciseProgress,exerciseSeries,trendOf,decomposeByExercise,consistency,confidenceOf,
+  setAlertMode,alertMode,soundOn,buzz,moveEntry,moveEntryUp,moveEntryDown,setPerSide,perSide});
 </script>
 
 <!-- ============================================================
