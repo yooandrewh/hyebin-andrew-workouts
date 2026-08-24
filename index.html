@@ -358,6 +358,7 @@ function load(){
     restSuperset:15,  // shorter rest between the exercises inside a superset (0 = none)
     restAlert:"sound", // device-only: "sound" | "vibrate" | "silent" — how the rest alert fires
     buzzPattern:"double", // device-only: which vibration pattern the rest alert uses
+    alertRepeat:3, // device-only: how many times the rest alert fires (nags until you get back)
     notifyRest:true, // device-only: banner when rest ends (needs notification permission)
     lockAudio:true,   // device-only: keep the countdown alive while the phone is locked
     ringOnSilent:false // device-only: opt-in. ON takes exclusive audio (stops music); OFF only ever mixes
@@ -1907,6 +1908,7 @@ function removeEntry(ei){
   markListChanged();
 }
 function toggleDone(ei,si){
+  stopAlertRepeat();
   const en=S.active.entries[ei];
   const st=en.sets[si];
   st.done=!st.done;
@@ -2404,10 +2406,14 @@ function restSettings(){
         onclick="setBuzzPattern('${k}')">${BUZZ_PATTERNS[k].label}</button>`).join("")}
       <button class="opt" onclick="testBuzz()">▶ Test</button>
     </div>
+    <div class="opts" style="margin-bottom:8px">
+      ${Object.keys(ALERT_REPEATS).map(n=>`<button class="opt ${alertRepeat()==+n?'on':''}"
+        onclick="setAlertRepeat(${n})">Repeat ${ALERT_REPEATS[n]}</button>`).join("")}
+    </div>
     <div class="muted" style="font-size:12px;margin-bottom:16px">
       ${("vibrate" in navigator)
-        ? "Tap one to feel it."
-        : "<b>This phone can't be vibrated from the web</b> — iOS gives no such control to web apps. The pattern below is still sent with the notification, but iOS uses its own buzz. Your phone's Settings → Sounds &amp; Haptics decides what that feels like."}
+        ? "Tap one to feel it. Repeats fire 5s apart and stop the moment you tick a set or reopen the app."
+        : "<b>This phone can't be vibrated from the web</b> — iOS gives no such control to web apps. The pattern is still sent with the notification, but iOS uses its own buzz, and there is no way to make it stronger — Settings → Sounds &amp; Haptics decides that. What <i>does</i> help is repeating: each repeat re-fires the banner, so you get another buzz. Repeats stop as soon as you tick a set or reopen the app."}
     </div>
     <div class="opts" style="margin-bottom:8px">
       <button class="opt ${notifOK?'on':''}" onclick="toggleNotify()">🔔 ${notifLbl}</button>
@@ -2537,6 +2543,7 @@ function unlockAudio(){
   }catch(e){}
 }
 function startRest(sec){
+  stopAlertRepeat();
   stopRest();
   unlockAudio();
   saveDiag({want:sec, startAt:Date.now(), dueAt:Date.now()+sec*1000, hides:0});
@@ -2561,6 +2568,7 @@ function adjustRest(delta){
   tickRest();
 }
 function stopRest(){
+  stopAlertRepeat();
   rest.running=false; if(rest.timer)clearInterval(rest.timer); rest.timer=null;
   if(audioMode!=="alarm") cancelBell();      // skipping a rest cancels its bell
   stopKeepAlive(); renderRest(); pushPresence();
@@ -2599,6 +2607,7 @@ function restDone(){
   }
   if(played || !soundOn()) restBuzz();   // buzz even with sound off (Android)
   notifyRestDone(played);
+  startAlertRepeat();
 }
 function renderRest(){
   const wrap=document.getElementById("rest");
@@ -2659,6 +2668,25 @@ const BUZZ_PATTERNS={
   heartbeat:{label:"Heartbeat", pat:[110,60,110,320,110,60,110]},
   sos:{label:"Escalating",pat:[60,60,120,60,240,60,400]}
 };
+/* Repeat the alert a few times — one buzz is easy to miss mid-set. Each repeat re-fires
+   the notification too (renotify), which is what actually buzzes an iPhone. Any sign of
+   you being back — ticking a set, starting a rest, opening the app — cancels the rest. */
+const ALERT_REPEATS={1:"Once",3:"3×",5:"5×"};
+let repTimer=null, repLeft=0;
+function alertRepeat(){ return ALERT_REPEATS[S.alertRepeat]?S.alertRepeat:3; }
+function setAlertRepeat(n){ if(!ALERT_REPEATS[n]) return; S.alertRepeat=n; save(); buzz(30); restSettings(); }
+function stopAlertRepeat(){ if(repTimer) clearInterval(repTimer); repTimer=null; repLeft=0; }
+function startAlertRepeat(){
+  stopAlertRepeat();
+  repLeft=alertRepeat()-1;
+  if(repLeft<=0) return;
+  repTimer=setInterval(()=>{
+    if(repLeft<=0 || !S.active){ stopAlertRepeat(); return; }
+    repLeft--;
+    restBuzz();
+    try{ notifyRestDone(false); }catch(e){}
+  }, 5000);
+}
 function buzzPattern(){ return BUZZ_PATTERNS[S.buzzPattern] ? S.buzzPattern : "double"; }
 function buzzPat(){ return BUZZ_PATTERNS[buzzPattern()].pat; }
 function restBuzz(){ buzz(buzzPat()); }
@@ -2672,7 +2700,7 @@ function buzz(pat){ if(buzzOn() && navigator.vibrate) navigator.vibrate(pat); }
 function setAlertMode(m){ S.restAlert=(m==="vibrate"||m==="silent")?m:"sound"; save();
   if(!soundOn()){ try{ cancelBell&&cancelBell(); }catch(e){} try{ releaseAudio&&releaseAudio(); }catch(e){} }
   buzz(30); restSettings(); render(); }
-function lockAudioOn(){ return soundOn() && S.lockAudio!==false; }
+function lockAudioOn(){ return S.lockAudio!==false; }
 /* iOS silences ordinary app audio on the mute switch — which is how most people carry a
    phone into a gym. "playback" is the one category that rings through it, at the price of
    being exclusive: your music stops for the few seconds the bell takes. */
@@ -2828,7 +2856,7 @@ function primeAlarm(){
   }catch(e){}
 }
 function playSrc(src, loop){
-  if(!soundOn()) return false;
+  if(!soundOn() && src!==silentWAV()) return false;   // silent keep-alive is always allowed
   try{
     const a=ensureRestAudio();
     a.loop=!!loop; a.volume=1;
@@ -2844,8 +2872,14 @@ function startKeepAlive(secLeft){
   audioSession(wantedSession());
   audioMode="silent";
   const sec=(secLeft==null && rest.running) ? (rest.endAt-Date.now())/1000 : secLeft;
-  // the countdown's own track, alarm baked in at the end
-  playSrc(restTrackWAV(Math.max(1, Math.round(sec||S.restDefault||90))), false);
+  if(!soundOn()){
+    // sound off: loop a silent tone purely to stop iOS freezing the timer. No bell, mixes
+    // with music, but it keeps us alive so the notification/buzz actually fires on time.
+    playSrc(silentWAV(), true);
+  } else {
+    // the countdown's own track, alarm baked in at the end
+    playSrc(restTrackWAV(Math.max(1, Math.round(sec||S.restDefault||90))), false);
+  }
   wireNowPlaying();
 }
 function stopKeepAlive(){
@@ -3175,6 +3209,7 @@ setInterval(checkForUpdate, 5*60*1000);
 document.addEventListener("visibilitychange",()=>{
   if(document.hidden) return;
   checkForUpdate();
+  stopAlertRepeat();      // you're back — stop nagging
   clearRestNotifications();
   // if iOS suspended us anyway (lock-screen audio off), settle the clock on return
   if(rest.running) tickRest();
@@ -3204,7 +3239,7 @@ Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGa
   plateCalc,plateType,plateBump,plateSetWeight,plateBar,
   exerciseOpts,ssLink,ssUnlink,tplExOpts,ssLinkTpl,ssUnlinkTpl,setRestSuperset,
   openExerciseProgress,exerciseSeries,trendOf,decomposeByExercise,consistency,confidenceOf,
-  setBuzzPattern,testBuzz,buzzPattern,restBuzz,
+  setBuzzPattern,testBuzz,buzzPattern,restBuzz,setAlertRepeat,alertRepeat,startAlertRepeat,stopAlertRepeat,
   setAlertMode,alertMode,soundOn,buzz,moveEntry,moveEntryUp,moveEntryDown,setPerSide,perSide});
 </script>
 
