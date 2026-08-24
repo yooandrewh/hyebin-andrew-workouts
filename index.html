@@ -255,6 +255,15 @@
   .prbadge{display:inline-block;background:linear-gradient(135deg,#ffb020,#ff8a00);color:#3a2400;
     font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;margin-left:7px;vertical-align:middle}
   .prline{color:var(--warn);font-size:12px;font-weight:700;margin-top:6px}
+  #nagbar{position:fixed;left:0;right:0;bottom:calc(64px + var(--safe-bot));z-index:70}
+  #nagbar .inner{max-width:560px;margin:0 auto;padding:0 12px}
+  .nagrow{display:flex;align-items:center;gap:10px;background:var(--good);color:#053;
+    border-radius:14px;padding:12px 14px;box-shadow:0 8px 24px rgba(0,0,0,.35);
+    animation:nagpulse 1.2s ease-in-out infinite}
+  @keyframes nagpulse{50%{transform:scale(.985);opacity:.92}}
+  .nagtxt{font-weight:800;font-size:15px;flex:1}
+  .nagstop{background:rgba(0,0,0,.18);color:#032;font-weight:800;font-size:14px;
+    padding:8px 16px;border-radius:10px;flex:none}
   .warnbox{background:rgba(230,150,10,.12);border:1px solid rgba(230,150,10,.45);border-radius:12px;
     padding:11px 12px;margin-bottom:16px;font-size:12.5px;font-weight:600;line-height:1.55;color:var(--txt)}
   .draghandle{display:inline-block;color:var(--muted);font-size:16px;line-height:1;margin-right:7px;
@@ -313,6 +322,7 @@
 
 <nav><div class="navinner" id="nav"></div></nav>
 
+<div id="nagbar" style="display:none"></div>
 <div id="gate"></div>
 <div id="updbar" onclick="applyUpdate()">New version ready — <span>tap to update</span></div>
 
@@ -2412,8 +2422,8 @@ function restSettings(){
     </div>
     <div class="muted" style="font-size:12px;margin-bottom:16px">
       ${("vibrate" in navigator)
-        ? "Tap one to feel it. Repeats fire 5s apart and stop the moment you tick a set or reopen the app."
-        : "<b>This phone can't be vibrated from the web</b> — iOS gives no such control to web apps. The pattern is still sent with the notification, but iOS uses its own buzz, and there is no way to make it stronger — Settings → Sounds &amp; Haptics decides that. What <i>does</i> help is repeating: each repeat re-fires the banner, so you get another buzz. Repeats stop as soon as you tick a set or reopen the app."}
+        ? "Tap one to feel it. Repeats fire 5s apart and stop the moment you tick a set or reopen the app. <b>Until stopped</b> keeps buzzing until you hit Stop, giving up after 3 minutes so it can\u2019t run down your battery in a gym bag."
+        : "<b>This phone can't be vibrated from the web</b> — iOS gives no such control to web apps. The pattern is still sent with the notification, but iOS uses its own buzz, and there is no way to make it stronger — Settings → Sounds &amp; Haptics decides that. What <i>does</i> help is repeating: each repeat re-fires the banner, so you get another buzz. Repeats stop as soon as you tick a set or reopen the app. <b>Until stopped</b> keeps re-buzzing until you hit Stop (3 minute ceiling)."}
     </div>
     <div class="opts" style="margin-bottom:8px">
       <button class="opt ${notifOK?'on':''}" onclick="toggleNotify()">🔔 ${notifLbl}</button>
@@ -2611,6 +2621,14 @@ function restDone(){
 }
 function renderRest(){
   const wrap=document.getElementById("rest");
+  const nag=document.getElementById("nagbar");
+  if(nag){
+    const showNag = nagging();
+    nag.style.display = showNag ? "block" : "none";
+    if(showNag) nag.innerHTML=`<div class="inner"><div class="nagrow">
+      <span class="nagtxt">⏱ Rest over — time to lift</span>
+      <button class="nagstop" onclick="stopAlertRepeat()">Stop</button></div></div>`;
+  }
   const show = rest.running && route.view==="active";
   wrap.style.display = show?"block":"none";
   const note=document.getElementById("restNote");
@@ -2671,21 +2689,39 @@ const BUZZ_PATTERNS={
 /* Repeat the alert a few times — one buzz is easy to miss mid-set. Each repeat re-fires
    the notification too (renotify), which is what actually buzzes an iPhone. Any sign of
    you being back — ticking a set, starting a rest, opening the app — cancels the rest. */
-const ALERT_REPEATS={1:"Once",3:"3×",5:"5×"};
-let repTimer=null, repLeft=0;
+const ALERT_REPEATS={1:"Once",3:"3\u00d7",5:"5\u00d7","until":"Until stopped"};
+// a runaway buzzer left in a gym bag is worse than a missed set — cap the nag at 3 min
+const NAG_CAP_MS=180000;
+let repTimer=null, repLeft=0, nagFrom=0, nagHeldAudio=false;
 function alertRepeat(){ return ALERT_REPEATS[S.alertRepeat]?S.alertRepeat:3; }
+function nagging(){ return !!repTimer; }
 function setAlertRepeat(n){ if(!ALERT_REPEATS[n]) return; S.alertRepeat=n; save(); buzz(30); restSettings(); }
-function stopAlertRepeat(){ if(repTimer) clearInterval(repTimer); repTimer=null; repLeft=0; }
+function stopAlertRepeat(){
+  const was=!!repTimer;
+  if(repTimer) clearInterval(repTimer);
+  repTimer=null; repLeft=0; nagFrom=0;
+  if(nagHeldAudio){ nagHeldAudio=false; try{ releaseAudio(); }catch(e){} }
+  if(was) renderRest();
+}
 function startAlertRepeat(){
   stopAlertRepeat();
-  repLeft=alertRepeat()-1;
+  const mode=alertRepeat();
+  const forever = (mode==="until");
+  repLeft = forever ? Infinity : mode-1;
   if(repLeft<=0) return;
+  nagFrom=Date.now();
+  // Repeats are just timers, and iOS freezes those when the phone locks. The rest track has
+  // already finished by now, so hold the page open with the silent (mixing) loop while nagging.
+  if(!soundOn() && lockAudioOn()){
+    try{ audioSession("ambient"); if(playSrc(silentWAV(), true)!==false) nagHeldAudio=true; }catch(e){}
+  }
   repTimer=setInterval(()=>{
-    if(repLeft<=0 || !S.active){ stopAlertRepeat(); return; }
+    if(!S.active || repLeft<=0 || (Date.now()-nagFrom)>NAG_CAP_MS){ stopAlertRepeat(); return; }
     repLeft--;
     restBuzz();
     try{ notifyRestDone(false); }catch(e){}
   }, 5000);
+  renderRest();
 }
 function buzzPattern(){ return BUZZ_PATTERNS[S.buzzPattern] ? S.buzzPattern : "double"; }
 function buzzPat(){ return BUZZ_PATTERNS[buzzPattern()].pat; }
