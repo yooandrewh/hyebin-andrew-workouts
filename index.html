@@ -1402,7 +1402,12 @@ function exerciseOpts(ei){
   const r=activeRuns()[ei];
   const cands=a.entries.map((e,i)=>({e,i})).filter(o=>o.i!==ei && !o.e.ss);
   const rs=ssRest(), u=exUnit(ex);
+  const logged=(en.sets||[]).filter(st=>st.done||st.weight!==""||st.reps!=="").length;
   openModal(`<h3>${escapeHtml(ex?ex.name:"Exercise")}</h3>
+    <button class="btn sec" style="margin-bottom:4px" onclick="swapExercise(${ei})">🔁 Swap exercise${
+      logged?` · keeps ${logged} set${logged===1?"":"s"}`:""}</button>
+    <div class="muted" style="font-size:12px;margin:6px 2px 14px">Logged it under the wrong lift? Change the name —
+      every set you typed stays exactly as it is.</div>
     ${r?`<div class="muted" style="margin:-4px 0 12px">In <b>superset ${r.letter}</b> (${r.pos+1} of ${r.size}) —
         ${rs>0?`${fmtClock(rs)} rest`:"no rest"} after this one, then the next exercise.</div>
       <button class="btn sec" onclick="ssUnlink(${ei})">🔗 Leave superset ${r.letter}</button>
@@ -1464,6 +1469,42 @@ function cycleExUnit(ei){
   const ex=exById(en.exerciseId); if(!ex) return;
   ex.unit = (exUnit(ex)==="kg") ? "lb" : "kg";
   save(); buzz(15); render();
+}
+/* Picked the wrong lift and only noticed after logging it — the numbers are right, the
+   name isn't. Swap the exercise underneath and keep every set exactly as typed. Weights
+   are stored in lb whatever unit each exercise reads in, so nothing is converted and
+   nothing moves; only the label, the goal and the ghosts change. */
+function swapExercise(ei){
+  if(!S.active || !S.active.entries[ei]) return;
+  pickTarget={type:"swap", ei}; pickSs=false; pickSsSel=[];
+  pickExercise();
+}
+function swapEntryExercise(ei, newId){
+  const a=S.active; if(!a) return;
+  const en=a.entries[ei]; if(!en) return;
+  const oldId=en.exerciseId;
+  if(oldId===newId){ closeModal(); render(); return; }
+  if(a.entries.some((e,i)=>i!==ei && e.exerciseId===newId)){
+    const nx=exById(newId);
+    alert(`${nx?nx.name:"That exercise"} is already in this workout. Remove that card first, or pick a different lift.`);
+    return;
+  }
+  en.exerciseId=newId;
+  /* Sets you typed keep their numbers; untouched ones should ghost the NEW lift's
+     recommendation rather than the old one's. */
+  const rec=recommend(a.profileId, newId);
+  let wi=0, ki=0;
+  en.sets.forEach(st=>{
+    const r = st.warmup ? rec.warmups[wi++] : rec.working[ki++];
+    st.recW   = r ? (r.w===""?null:r.w) : null;
+    st.recR   = r ? r.r : null;
+    st.recRPE = (r && r.rpe!=null) ? r.rpe : null;
+  });
+  a.removed=a.removed||{};
+  a.removed[oldId]=Date.now();      // tombstone so the swap reaches your partner
+  delete a.removed[newId];
+  save(); closeModal(); render();
+  if(!applyingPlan) markListChanged();
 }
 function setPerSide(exId, on){
   const ex=exById(exId); if(!ex) return;
@@ -2037,11 +2078,19 @@ function setPickMode(ss){
   pickExercise(typed);
 }
 function pickExercise(prefill){
-  openModal(`<h3>Add exercise</h3>
-    <div class="opts" style="margin:-2px 0 14px">
-      <button class="opt ${pickSs?'':'on'}" onclick="setPickMode(false)">One exercise</button>
-      <button class="opt ${pickSs?'on':''}" onclick="setPickMode(true)">🔗 Superset</button></div>
-    ${pickSs?`<div class="muted" style="margin:-8px 2px 14px;font-size:13px">Pick two or more — they go in linked, and you only get the full rest after the last one.</div>`:""}
+  const sw=swapEntry();
+  const swLogged=sw?(sw.sets||[]).filter(st=>st.done||st.weight!==""||st.reps!=="").length:0;
+  const swEx=sw?exById(sw.exerciseId):null;
+  openModal(`<h3>${sw?"Swap exercise":"Add exercise"}</h3>
+    ${sw
+      ? `<div class="muted" style="margin:-4px 2px 14px;font-size:13px">Replacing
+          <b>${escapeHtml(swEx?swEx.name:"this exercise")}</b>.${swLogged
+            ? ` Your ${swLogged} logged set${swLogged===1?"":"s"} stay${swLogged===1?"s":""} exactly as typed.`
+            : ""}</div>`
+      : `<div class="opts" style="margin:-2px 0 14px">
+          <button class="opt ${pickSs?'':'on'}" onclick="setPickMode(false)">One exercise</button>
+          <button class="opt ${pickSs?'on':''}" onclick="setPickMode(true)">🔗 Superset</button></div>
+        ${pickSs?`<div class="muted" style="margin:-8px 2px 14px;font-size:13px">Pick two or more — they go in linked, and you only get the full rest after the last one.</div>`:""}`}
     <div id="sspicked"></div>
     <div class="field"><label>Exercise name</label>
       <input class="text" id="exname" placeholder="Start typing… e.g. Bench Press" autocomplete="off" oninput="onExType()"></div>
@@ -2055,7 +2104,7 @@ function pickExercise(prefill){
         <button class="opt on" onclick="pick(this,'assistOpts')" data-v="Standard">Standard</button>
         <button class="opt" onclick="pick(this,'assistOpts')" data-v="Assisted">Assisted</button></div>
       <div class="muted" style="margin:6px 2px 0;font-size:13px">Assisted = the number you log is help (machine or band). Less of it counts as progress.</div></div>
-    <button class="btn" id="createBtn" onclick="createAndAddExercise()">+ Add exercise</button>
+    <button class="btn" id="createBtn" onclick="createAndAddExercise()">${sw?"Swap":"+ Add exercise"}</button>
     <button class="btn" id="ssAddBtn" style="display:none;margin-top:10px;background:var(--accent)"
       onclick="addSupersetSelection()">🔗 Add as superset</button>`,true);
   setTimeout(()=>{
@@ -2063,6 +2112,10 @@ function pickExercise(prefill){
     if(i){ if(prefill) i.value=prefill; i.focus(); }
     onExType(); renderSsPicked();
   },60);
+}
+// the entry a swap is aimed at — null unless the picker was opened from "Swap exercise"
+function swapEntry(){
+  return (pickTarget.type==="swap" && S.active) ? (S.active.entries[pickTarget.ei]||null) : null;
 }
 /* the running selection, in the order you tapped it */
 function ssPickToggle(exId){
@@ -2111,10 +2164,16 @@ function addSupersetSelection(){
 }
 function libRow(ex){
   const at = pickSs ? pickSsSel.indexOf(ex.id) : -1;
-  return `<div class="libitem${at>=0?' on':''}" onclick="${pickSs?`ssPickToggle('${ex.id}')`:`addExistingExercise('${ex.id}')`}">
+  const sw = swapEntry();
+  // swapping onto a lift that's already its own card in this workout would make two of it
+  const taken = !!(sw && S.active.entries.some(e=>e!==sw && e.exerciseId===ex.id));
+  const isSelf = !!(sw && sw.exerciseId===ex.id);
+  const tag = taken ? "in workout" : isSelf ? "current" : sw ? "🔁 swap" : pickSs ? (at>=0?`${at+1} ✓`:"＋ pick") : "＋ add";
+  return `<div class="libitem${at>=0?' on':''}" style="${taken||isSelf?"opacity:.45":""}"
+    ${taken||isSelf?"":`onclick="${pickSs?`ssPickToggle('${ex.id}')`:`addExistingExercise('${ex.id}')`}"`}>
     <div><div class="nm">${escapeHtml(ex.name)}</div>
     <div class="eq">${[(ex.angle&&ex.angle!=="None")?ex.angle:null,ex.equipment,isAssisted(ex)?"assisted":null].filter(Boolean).join(" · ")}</div></div>
-    <div class="muted">${pickSs ? (at>=0?`${at+1} ✓`:"＋ pick") : "＋ add"}</div></div>`;
+    <div class="muted">${tag}</div></div>`;
 }
 // live type-ahead: show saved exercises that match as you type
 function onExType(){
@@ -2125,10 +2184,11 @@ function onExType(){
   // match on the normalized key too, so "benchpress" / "bench presses" still find Bench Press
   const matches=(q? lib.filter(e=>exDisplay(e).toLowerCase().includes(q) || exKey(e.name).includes(k)) : lib).slice(0,8);
   const dupe = raw ? findExercise(raw, selected("equipOpts")||"Barbell", selected("angleOpts")||"None") : null;
+  const sw=swapEntry();
   const sug=document.getElementById("suggest");
   if(sug){
     sug.innerHTML = matches.length
-      ? `<div class="field"><label>${q?"Matches in your library — tap to add":"Your saved exercises — tap to add"}</label>
+      ? `<div class="field"><label>${(q?"Matches in your library":"Your saved exercises")+(sw?" — tap to swap":" — tap to add")}</label>
           <div class="liblist">${matches.map(libRow).join("")}</div></div>`
       : (q?`<div class="muted" style="margin:-2px 2px 14px">No saved match — set angle &amp; equipment below, then add it as new.</div>`:"");
   }
@@ -2139,10 +2199,10 @@ function onExType(){
     ao.querySelectorAll(".opt").forEach(o=>o.classList.toggle("on", o.dataset.v===want));
   }
   const btn=document.getElementById("createBtn");
-  const verb = pickSs ? "Pick" : "Add";
-  if(btn) btn.textContent = !raw ? (pickSs?"+ Pick exercise":"+ Add exercise")
-    : dupe ? `+ ${verb} “${dupe.name}”`        // same lift, different spelling — reuse it
-           : `+ ${verb} “${titleCaseName(raw)}” as new`;
+  const verb = pickSs ? "Pick" : sw ? "Swap to" : "Add";
+  if(btn) btn.textContent = !raw ? (pickSs?"+ Pick exercise":sw?"Swap exercise":"+ Add exercise")
+    : dupe ? `${sw?"":"+ "}${verb} “${dupe.name}”`   // same lift, different spelling — reuse it
+           : `${sw?"":"+ "}${verb} “${titleCaseName(raw)}” as new`;
 }
 function pick(btn,group){
   document.querySelectorAll(`#${group} .opt`).forEach(o=>o.classList.remove("on")); btn.classList.add("on");
@@ -2152,6 +2212,7 @@ function pick(btn,group){
 function selected(group){ const el=document.querySelector(`#${group} .opt.on`); return el?el.dataset.v:null; }
 
 function addExistingExercise(exId){
+  if(pickTarget.type==="swap"){ return swapEntryExercise(pickTarget.ei, exId); }
   if(pickTarget.type==="template"){
     const w=workoutById(pickTarget.id);
     if(w && !w.exerciseIds.includes(exId)) w.exerciseIds.push(exId);
@@ -3405,7 +3466,7 @@ Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGa
   addExistingExercise,createAndAddExercise,finishWorkout,cancelWorkout,deleteSession,
   tplUpdate,tplSaveNewPrompt,tplSaveNew,tplDismiss,gotoSession,howTo,rpeHelp,editGuide,saveGuide,bump,closeModal,workoutById,save,render,
   plateCalc,plateType,plateBump,plateSetWeight,plateBar,
-  exerciseOpts,ssLink,ssUnlink,tplExOpts,ssLinkTpl,ssUnlinkTpl,setRestSuperset,setExUnit,cycleExUnit,
+  exerciseOpts,ssLink,ssUnlink,tplExOpts,ssLinkTpl,ssUnlinkTpl,setRestSuperset,setExUnit,cycleExUnit,swapExercise,swapEntryExercise,
   openExerciseProgress,exerciseSeries,trendOf,decomposeByExercise,consistency,confidenceOf,
   setBuzzPattern,testBuzz,buzzPattern,restBuzz,setAlertRepeat,alertRepeat,startAlertRepeat,stopAlertRepeat,
   setAlertMode,alertMode,soundOn,buzz,moveEntry,moveEntryUp,moveEntryDown,setPerSide,perSide});
