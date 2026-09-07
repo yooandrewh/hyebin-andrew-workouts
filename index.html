@@ -92,6 +92,9 @@
   .setgrid th{color:var(--muted);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;
     text-align:center;padding:4px 2px}
   .setgrid td{text-align:center;padding:4px 2px}
+  .unitbtn{font-family:inherit;font-size:11px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;
+    color:var(--accent);background:var(--card2);border:1px solid var(--line);border-radius:7px;padding:3px 7px}
+  .unitbtn:active{background:var(--line)}
   .setgrid th.l,.setgrid td.l{text-align:left}
   .setno{width:34px;font-weight:700;color:var(--muted)}
   .prevcell{color:var(--muted);font-size:13px;white-space:nowrap}
@@ -636,6 +639,34 @@ function isAssistedId(exId){ return isAssisted(exById(exId)); }
 
 /* ---------- progressive-overload recommendation (Nippard-style) ---------- */
 function roundTo(v,step){ return Math.round(v/step)*step; }
+/* ---------- units ----------
+   Every weight is STORED in lb, always. One canonical scale is what keeps volume,
+   estimated 1RMs and PRs comparable, and it means flipping an exercise to kg can
+   never rewrite what you already lifted. A kg exercise converts at the edges only:
+   what you read, and what you type. The unit lives on the exercise, so a barbell
+   can stay in lb while the dumbbell rack the gym labels in kg reads in kg. */
+const LB_PER_KG=2.20462262;
+function exUnit(exOrId){
+  const e=(typeof exOrId==="string")?exById(exOrId):exOrId;
+  if(e && (e.unit==="kg"||e.unit==="lb")) return e.unit;      // whitelist — this gets rendered
+  return S.units==="kg"?"kg":"lb";
+}
+function toDisp(lb,u){ const n=Number(lb); return isFinite(n) ? (u==="kg"? n/LB_PER_KG : n) : null; }
+function fromDisp(v,u){ const n=Number(v); return isFinite(n) ? (u==="kg"? n*LB_PER_KG : n) : null; }
+/* how a stored weight reads: kg to 0.1, lb to 0.01, trailing zeros dropped. Rounding
+   the display (not the store) is what makes 60 kg round-trip back to "60". */
+function dispW(lb,u){
+  if(lb===""||lb==null) return "";
+  const n=toDisp(lb,u); if(n==null) return "";
+  const q=(u==="kg")?10:100;
+  return String(Math.round(n*q)/q);
+}
+/* Snap a RECOMMENDED load onto plates that exist in this exercise's unit — 5 lb, or
+   2.5 kg (a pair of 1.25s). Every jump the engine makes is at least 5 lb / 2.27 kg,
+   which is wider than the kg grid, so a snapped recommendation always still moves. */
+function snapW(ex,lb){
+  return exUnit(ex)==="kg" ? fromDisp(roundTo(toDisp(lb,"kg"),2.5),"kg") : roundTo(lb,5);
+}
 // Jump scales with the load: ~2.5% upper / ~3.5% lower-body, rounded to 5 lb,
 // never less than the smallest practical plate jump. So 135→+5 but 1080→+40.
 function isLowerBody(ex){
@@ -675,13 +706,13 @@ function workingWeightOf(sets, allowZero){
   // resolves to the mode and is unaffected.
   return bc>1 ? best : ws[0];
 }
-function warmupsFor(w, reps){
+function warmupsFor(ex, w, reps){
   if(!w || w<50) return [];
-  return [ {w:roundTo(w*0.5,5), r:reps}, {w:roundTo(w*0.7,5), r:reps} ];
+  return [ {w:snapW(ex,w*0.5), r:reps}, {w:snapW(ex,w*0.7), r:reps} ];
 }
 // returns {working:[{w,r,rpe}], warmups:[{w,r}], note}
 function recommend(pid, exId){
-  const ex=exById(exId)||{}; const g=ex.goal||{};
+  const ex=exById(exId)||{}; const g=ex.goal||{}; const u=exUnit(ex);
   const repsLow = g.repsLow || g.repsHigh || 8;
   const repsHigh = g.repsHigh || g.repsLow || 12;
   const assisted = isAssisted(ex);
@@ -698,28 +729,28 @@ function recommend(pid, exId){
       working=Array.from({length:nSets},()=>({w:0, r:repsHigh, rpe:g.rpe||null}));
       note=`Full bodyweight, ${repsHigh} on every set. Nothing left to strip — add reps, or start adding load.`;
     }else if(allHitTop && assisted){
-      const dec=assistDecrement(wWeight); const newW=Math.max(0, roundTo(wWeight-dec,5));
+      const dec=assistDecrement(wWeight); const newW=Math.max(0, snapW(ex,wWeight-dec));
       working=Array.from({length:nSets},()=>({w:newW, r:repsLow, rpe:g.rpe||null}));
       note = newW===0
         ? `Earned it — hit ${repsHigh} on every set. Drop the help entirely: <b>bodyweight × ${repsLow}</b>.`
-        : `Earned it — hit ${repsHigh} on every set. Cut assistance to <b>${newW} lb × ${repsLow}</b> (−${wWeight-newW}).`;
+        : `Earned it — hit ${repsHigh} on every set. Cut assistance to <b>${dispW(newW,u)} ${u} × ${repsLow}</b> (−${dispW(wWeight-newW,u)}).`;
     }else if(allHitTop){
-      const inc=weightIncrement(ex, wWeight); const newW=roundTo(wWeight+inc,5);
+      const inc=weightIncrement(ex, wWeight); const newW=snapW(ex, wWeight+inc);
       working=Array.from({length:nSets},()=>({w:newW, r:repsLow, rpe:g.rpe||null}));
-      note=`Earned it — hit ${repsHigh} on every set. Go <b>${newW} lb × ${repsLow}</b> (+${inc}).`;
+      note=`Earned it — hit ${repsHigh} on every set. Go <b>${dispW(newW,u)} ${u} × ${repsLow}</b> (+${dispW(newW-wWeight,u)}).`;
     }else{
       working=Array.from({length:nSets},(_,i)=>{
         const lr=last[i]?(Number(last[i].reps)||repsLow):repsLow;
         return {w:(assisted ? wWeight : (wWeight||"")), r:Math.min(repsHigh,lr+1), rpe:g.rpe||null};
       });
       const target=working.map(s=>s.r).join("/");
-      const at = assisted ? (wWeight>0 ? wWeight+" lb help × " : "bodyweight × ") : (wWeight?wWeight+" lb × ":"");
+      const at = assisted ? (wWeight>0 ? dispW(wWeight,u)+" "+u+" help × " : "bodyweight × ") : (wWeight?dispW(wWeight,u)+" "+u+" × ":"");
       const then = assisted ? `Cut assistance once all sets reach ${repsHigh}.` : `Add weight once all sets reach ${repsHigh}.`;
       note=`Beat last time: <b>${at}${target}</b>${lastRpe?" (last RPE "+lastRpe+")":""}. ${then}`;
     }
     const todayW = (working[0] && working[0].w) ? working[0].w : wWeight;
     // assisted work is already the easy end of the movement — no ramp-up sets
-    return { working, warmups:(assisted?[]:warmupsFor(todayW,repsLow)), note };
+    return { working, warmups:(assisted?[]:warmupsFor(ex,todayW,repsLow)), note };
   }
   const nSets=g.sets||3;
   return { working:Array.from({length:nSets},()=>({w:"", r:repsLow, rpe:g.rpe||null})), warmups:[],
@@ -780,10 +811,11 @@ function bestSetIn(entry, assisted){
   return best;
 }
 // how a best-set reads on an assisted lift: the reps matter, and the help is the qualifier
-function setLabel(best){
+function setLabel(best,u){
   if(!best) return "";
-  if(!best.assisted) return `${best.weight} × ${best.reps}`;
-  return best.weight>0 ? `${best.reps} reps @ ${best.weight} help` : `${best.reps} reps unassisted`;
+  u = (u==="kg")?"kg":"lb";
+  if(!best.assisted) return `${dispW(best.weight,u)} ${u} × ${best.reps}`;
+  return best.weight>0 ? `${best.reps} reps @ ${dispW(best.weight,u)} ${u} help` : `${best.reps} reps unassisted`;
 }
 // best effort for this profile+exercise, optionally only counting sessions before a timestamp
 function prFor(profileId, exerciseId, beforeTs){
@@ -1008,7 +1040,8 @@ function myPresence(){
   const ent=a.entries[a.entries.length-1];
   const ex=ent?exById(ent.exerciseId):null;
   let lastSet="", setsDone=0;
-  a.entries.forEach(en=>en.sets.forEach(s=>{ if(s.done && !s.warmup){ setsDone++; lastSet=(s.weight||0)+" × "+(s.reps||0); }}));
+  a.entries.forEach(en=>{ const eu=exUnit(en.exerciseId);
+    en.sets.forEach(s=>{ if(s.done && !s.warmup){ setsDone++; lastSet=(dispW(s.weight,eu)||0)+" "+eu+" × "+(s.reps||0); }}); });
   const prof=profile(a.profileId)||cur;
   // the exercise list travels with presence (always published) so "Together" can start any time
   const ids=a.entries.map(e=>e.exerciseId).filter(safeId);
@@ -1368,7 +1401,7 @@ function exerciseOpts(ei){
   const ex=exById(en.exerciseId);
   const r=activeRuns()[ei];
   const cands=a.entries.map((e,i)=>({e,i})).filter(o=>o.i!==ei && !o.e.ss);
-  const rs=ssRest();
+  const rs=ssRest(), u=exUnit(ex);
   openModal(`<h3>${escapeHtml(ex?ex.name:"Exercise")}</h3>
     ${r?`<div class="muted" style="margin:-4px 0 12px">In <b>superset ${r.letter}</b> (${r.pos+1} of ${r.size}) —
         ${rs>0?`${fmtClock(rs)} rest`:"no rest"} after this one, then the next exercise.</div>
@@ -1395,6 +1428,15 @@ function exerciseOpts(ei){
       </div>
       <div class="muted" style="font-size:12px;margin-top:7px">Or drag the ⠿ handle on the card.</div>
     </div>
+    <div class="field"><label>Units</label>
+      <div class="opts">
+        <button class="opt ${u==='lb'?'on':''}" onclick="setExUnit('${en.exerciseId}','lb')">lb</button>
+        <button class="opt ${u==='kg'?'on':''}" onclick="setExUnit('${en.exerciseId}','kg')">kg</button>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:7px">Just this exercise — read and type it in <b>${u}</b>,
+        and recommendations land on ${u==='kg'?"2.5 kg":"5 lb"} steps. Everything is stored in lb underneath, so your
+        history, PRs and volume don't move when you switch.</div>
+    </div>
     ${(ex && /dumbbell|kettlebell/i.test(ex.equipment||"")) ? `
     <div class="field"><label>Weight you type</label>
       <div class="opts">
@@ -1407,6 +1449,21 @@ function exerciseOpts(ei){
     </div>` : ""}
     <div class="divider"></div>
     <button class="btn danger" onclick="removeEntry(${ei})">Remove exercise</button>`);
+}
+/* The unit rides on the exercise, not the set, so it follows the lift everywhere —
+   library, history, plate calculator — and syncs to the other phone with it. */
+function setExUnit(exId, u){
+  const ex=exById(exId); if(!ex) return;
+  ex.unit=(u==="kg")?"kg":"lb"; save(); buzz(20); render();
+  const ei=(S.active?S.active.entries.findIndex(e=>e.exerciseId===exId):-1);
+  if(ei>=0) exerciseOpts(ei); else closeModal();
+}
+// the kg/lb chip in the set-grid header: one tap, no sheet
+function cycleExUnit(ei){
+  const en=S.active&&S.active.entries[ei]; if(!en) return;
+  const ex=exById(en.exerciseId); if(!ex) return;
+  ex.unit = (exUnit(ex)==="kg") ? "lb" : "kg";
+  save(); buzz(15); render();
 }
 function setPerSide(exId, on){
   const ex=exById(exId); if(!ex) return;
@@ -1518,6 +1575,7 @@ function viewActive(){
     const prev=lastSetsFor(a.profileId, en.exerciseId);
     const rec=recommend(a.profileId, en.exerciseId);
     const r=runs[ei];
+    const u=exUnit(ex);
     html += `${ssOpen(r)}<div class="card exrow" data-ei="${ei}">
       <div class="exhead">
         <div><div class="exname"><span class="draghandle" data-drag="${ei}">⠿</span>${ssBadge(r)}${escapeHtml(ex?ex.name:"Exercise")}${perSide(ex)?'<span class="sidetag">per DB</span>':''}</div>
@@ -1528,22 +1586,24 @@ function viewActive(){
         </div>
       </div>
       <table class="setgrid"><thead><tr>
-        <th class="setno">Set</th><th>Prev</th><th>${isAssisted(ex)?"ASSIST":S.units.toUpperCase()}</th><th>Reps</th><th>RPE <span class="rpeq" onclick="rpeHelp()">?</span></th><th>✓</th><th></th>
+        <th class="setno">Set</th><th>Prev</th>
+        <th>${isAssisted(ex)?`<div style="line-height:1.3">Assist</div>`:""}<button class="unitbtn" onclick="cycleExUnit(${ei})">${u}</button></th>
+        <th>Reps</th><th>RPE <span class="rpeq" onclick="rpeHelp()">?</span></th><th>✓</th><th></th>
       </tr></thead><tbody>`;
     let wkNo=0, wkIdx=0;
     const ghosts=ghostsFor(en);
     en.sets.forEach((st,si)=>{
       let label, p;
       if(st.warmup){ label="W"; p="—"; }
-      else { wkNo++; label=String(wkNo); const pv=prev&&prev[wkIdx]; p = pv?`${pv.weight||0}×${pv.reps||0}`:"—"; wkIdx++; }
+      else { wkNo++; label=String(wkNo); const pv=prev&&prev[wkIdx]; p = pv?`${dispW(pv.weight,u)||0}×${pv.reps||0}`:"—"; wkIdx++; }
       const gh=ghosts[si];
-      const phW = (gh.w!=null&&gh.w!=="")? gh.w : "";
+      const phW = dispW(gh.w,u);
       const phR = (gh.r!=null&&gh.r!=="")? gh.r : "";
       const phRpe = (gh.rpe!=null&&gh.rpe!=="")? gh.rpe : "–";
       html += `<tr class="${st.done?'done':''} ${st.warmup?'wu':''}">
         <td class="setno">${label}</td>
         <td class="prevcell">${p}</td>
-        <td><input class="inp" inputmode="decimal" value="${st.weight??""}" placeholder="${phW}" data-f="weight" data-e="${ei}" data-s="${si}"></td>
+        <td><input class="inp" inputmode="decimal" value="${dispW(st.weight,u)}" placeholder="${phW}" data-f="weight" data-e="${ei}" data-s="${si}"></td>
         <td><input class="inp" inputmode="numeric" value="${st.reps??""}" placeholder="${phR}" data-f="reps" data-e="${ei}" data-s="${si}"></td>
         <td><input class="inp rpe" inputmode="decimal" value="${st.rpe??""}" placeholder="${phRpe}" data-f="rpe" data-e="${ei}" data-s="${si}"></td>
         <td><button class="check" onclick="toggleDone(${ei},${si})">${st.done?'✓':''}</button></td>
@@ -1555,8 +1615,8 @@ function viewActive(){
     const todayBest=bestSetIn(en);
     const beatIt = todayBest && (!pr || todayBest.v>pr.v+0.001);
     const prTxt = beatIt
-      ? `🏆 New PR — ${setLabel(todayBest)}${pr?` (beat ${setLabel(pr)})`:""}`
-      : (pr?`🏆 PR: ${setLabel(pr)}`:"");
+      ? `🏆 New PR — ${setLabel(todayBest,u)}${pr?` (beat ${setLabel(pr,u)})`:""}`
+      : (pr?`🏆 PR: ${setLabel(pr,u)}`:"");
     html += `</tbody></table>
       ${prTxt?`<div class="prline">${escapeHtml(prTxt)}</div>`:""}
       ${rec.note?`<div class="recnote"><span>↗</span><span>${rec.note}</span></div>`:""}
@@ -1617,7 +1677,7 @@ function viewSessionDetail(id){
   html+=`<div class="sub" style="margin:0 2px 14px">${fmtDate(s.endedAt)}${s.startedAt?` · ${timeOf(s.startedAt)}–${timeOf(s.endedAt)}`:""} · ⏱ ${fmtDur(s.durationSec)} · ${sessionVolume(s).toLocaleString()} ${S.units}</div>`;
   const runs=ssRuns(s.entries.map(en=>en.ss||null));
   html+=s.entries.map((en,i)=>{
-    const e=exById(en.exerciseId), r=runs[i];
+    const e=exById(en.exerciseId), r=runs[i], eu=exUnit(en.exerciseId);
     return `${ssOpen(r)}<div class="card">
       <div class="row between"><div>
         <div class="exname">${ssBadge(r)}${escapeHtml(entryName(en))}</div>
@@ -1625,8 +1685,8 @@ function viewSessionDetail(id){
         ${e?`<button class="howbtn" onclick="howTo('${en.exerciseId}')">▶ How-to</button>`:""}
       </div>
       <table class="setgrid" style="margin-top:8px"><thead><tr>
-        <th class="setno">Set</th><th>${S.units.toUpperCase()}</th><th>Reps</th><th>RPE</th></tr></thead><tbody>
-        ${(function(){let n=0; return en.sets.map(st=>{const lbl=st.warmup?"W":String(++n); return `<tr class="${st.warmup?'wu':''}"><td class="setno">${lbl}</td><td>${st.weight||0}</td><td>${st.reps||0}</td><td>${st.rpe||"–"}</td></tr>`;}).join("");})()}
+        <th class="setno">Set</th><th>${eu}</th><th>Reps</th><th>RPE</th></tr></thead><tbody>
+        ${(function(){let n=0; return en.sets.map(st=>{const lbl=st.warmup?"W":String(++n); return `<tr class="${st.warmup?'wu':''}"><td class="setno">${lbl}</td><td>${dispW(st.weight,eu)||0}</td><td>${st.reps||0}</td><td>${st.rpe||"–"}</td></tr>`;}).join("");})()}
       </tbody></table></div>${ssClose(r)}`;
   }).join("");
   html+=`<button class="btn danger" onclick="deleteSession('${s.id}')">Delete this session</button>`;
@@ -1684,7 +1744,7 @@ function viewProgress(){
     const pct=(t.pct==null)?null:t.pct;
     const arrow=pct==null?"":(pct>1?"▲":(pct<-1?"▼":"▬"));
     const col=pct==null?"var(--muted)":(pct>1?"var(--good)":(pct<-1?"var(--bad)":"var(--muted)"));
-    const best=prFor(pid,r.id);
+    const best=prFor(pid,r.id), eu=exUnit(r.id);
     return `<div class="card tap" onclick="openExerciseProgress('${r.id}')">
       <div class="row between">
         <div style="min-width:0">
@@ -1697,7 +1757,7 @@ function viewProgress(){
         </div>
       </div>
       <div style="margin-top:8px">${sparkline(vals,300,34)}</div>
-      <div class="meta" style="margin-top:6px">${best?`PR ${best.weight} × ${best.reps}`:""}${best?" · ":""}${r.series.length} session${r.series.length!==1?"s":""}</div>
+      <div class="meta" style="margin-top:6px">${best?`PR ${dispW(best.weight,eu)} ${eu} × ${best.reps}`:""}${best?" · ":""}${r.series.length} session${r.series.length!==1?"s":""}</div>
     </div>`;
   }).join("");
 
@@ -1716,7 +1776,7 @@ function viewExerciseProgress(exId){
   const pid=S.currentProfileId, ex=exById(exId);
   if(!ex){ route.view="list"; return viewProgress(); }
   const series=exerciseSeries(pid,exId,{eventControl:progControls});
-  const t=trendOf(series), best=prFor(pid,exId);
+  const t=trendOf(series), best=prFor(pid,exId), u=exUnit(ex);
   let html=`<button class="btn ghost sm" style="width:auto;padding-left:0;margin-bottom:6px" onclick="route.view='list';route.id=null;render()">‹ Progress</button>`;
   html+=`<div class="h1" style="margin-bottom:2px">${escapeHtml(ex.name)}</div>
     <div class="sub" style="margin:0 2px 14px">${escapeHtml([(ex.angle&&ex.angle!=="None")?ex.angle:null,ex.equipment].filter(Boolean).join(" · "))}</div>`;
@@ -1728,14 +1788,14 @@ function viewExerciseProgress(exId){
       <div style="text-align:right"><div class="conf ${t.conf.cls}">${escapeHtml(t.conf.note)}</div>
       <div class="meta">${progControls?"outliers dropped":"uncontrolled"}</div></div></div>
     <div style="margin-top:10px">${sparkline(series.map(r=>r.e1rm),300,60)}</div>
-    ${best?`<div class="prline">🏆 PR: ${best.weight} × ${best.reps}</div>`:""}
+    ${best?`<div class="prline">🏆 PR: ${dispW(best.weight,u)} ${u} × ${best.reps}</div>`:""}
   </div>`;
   html+=`<div class="anacard"><div class="anahead"><span class="anastep">Every session</span></div></div>`;
   html+=series.slice().reverse().map(r=>`<div class="card" style="padding:11px 14px">
       <div class="row between"><div>
-        <div style="font-weight:700">${r.weight} × ${r.reps}</div>
+        <div style="font-weight:700">${dispW(r.weight,u)} ${u} × ${r.reps}</div>
         <div class="meta">${fmtDate(r.at)}</div></div>
-      <div style="text-align:right"><div style="font-weight:800">${Math.round(r.e1rm)}</div>
+      <div style="text-align:right"><div style="font-weight:800">${Math.round(toDisp(r.e1rm,u))}</div>
         <div class="meta">est. 1RM · ${r.setCount} set${r.setCount!==1?"s":""}</div></div></div></div>`).join("");
   return html;
 }
@@ -1881,7 +1941,7 @@ function ghostsFor(en){
     const r=(st.reps!=null&&st.reps!=="")?st.reps:g.r;
     if(w!=null && w!==""){
       const nw=Number(w)||0;
-      cw = nw>0 ? roundTo(nw+rampIncrement(ex,nw),5) : w;   // bodyweight/0 carries flat
+      cw = nw>0 ? snapW(ex, nw+rampIncrement(ex,nw)) : w;   // bodyweight/0 carries flat
     }
     if(r!=null && r!=="") cr=r;
     return g;
@@ -1890,10 +1950,10 @@ function ghostsFor(en){
 /* repaint the carried ghosts in place — typing must not re-render, or the keyboard drops */
 function refreshGhosts(ei){
   const en=S.active&&S.active.entries[ei]; if(!en) return;
-  const g=ghostsFor(en);
+  const g=ghostsFor(en), u=exUnit(en.exerciseId);
   document.querySelectorAll(`.inp[data-e="${ei}"]`).forEach(inp=>{
     const gh=g[+inp.dataset.s]; if(!gh) return;
-    if(inp.dataset.f==="weight")    inp.placeholder=(gh.w!=null&&gh.w!=="")?gh.w:"";
+    if(inp.dataset.f==="weight")    inp.placeholder=dispW(gh.w,u);
     else if(inp.dataset.f==="reps") inp.placeholder=(gh.r!=null&&gh.r!=="")?gh.r:"";
   });
 }
@@ -1950,8 +2010,15 @@ document.addEventListener("input",(e)=>{
   const t=e.target;
   if(t.dataset && t.dataset.f && S.active){
     const {f,e:ei,s:si}=t.dataset;
-    const st=S.active.entries[+ei].sets[+si];
-    st[f]= t.value;
+    const en=S.active.entries[+ei];
+    const st=en.sets[+si];
+    if(f==="weight" && exUnit(en.exerciseId)==="kg"){
+      // store lb, always. Blank stays blank — 0 is a real assisted number, not "unlogged".
+      const kg=Number(t.value);
+      st.weight = (t.value==="" || !isFinite(kg)) ? "" : kg*LB_PER_KG;
+    } else {
+      st[f]= t.value;      // lb is already canonical, so keep the raw text ("135." mid-type)
+    }
     save();
     if(f!=="rpe") refreshGhosts(+ei);   // later sets follow what you just typed
   }
@@ -2114,16 +2181,19 @@ function createAndAddExercise(){
 }
 
 /* ----- finish / cancel ----- */
-function finishWorkout(){
-  const a=S.active;
-  if(!a){ return; }
-  // keep only entries with at least one logged set (any weight or reps entered or marked done)
-  const entries=a.entries.map(en=>({
+// keep only entries with at least one logged set (any weight or reps entered or marked done)
+function sessionEntriesFrom(a){
+  return a.entries.map(en=>({
     exerciseId:en.exerciseId,
     ss:en.ss||null,                  // keep the superset grouping in History
     sets:en.sets.filter(s=>s.done || s.weight!=="" || s.reps!=="")
               .map(s=>{ const o={weight:num(s.weight),reps:num(s.reps),rpe:s.rpe===""?null:num(s.rpe)}; if(s.warmup) o.warmup=true; return o; })
   })).filter(en=>en.sets.length);
+}
+function finishWorkout(){
+  const a=S.active;
+  if(!a){ return; }
+  const entries=sessionEntriesFrom(a);
   if(entries.length===0){
     if(!confirm("No sets logged. Discard this workout?")) return;
     cancelWorkout(true); return;
@@ -2137,6 +2207,54 @@ function finishWorkout(){
   S.active=null; stopSessionTimer(); stopRest(); save();
   if(wasJoint) endPlan();
   maybeOfferTemplate(sess, sourceId);
+}
+
+/* A session you forget to finish otherwise runs forever: you walk out of the gym, the
+   phone locks, and three days later it's still "in progress" — and because recommend()
+   reads your LAST session, a zombie session also freezes every recommendation behind it.
+   So two hours is the ceiling. Whatever was logged is saved to History, stamped at
+   start + 2h rather than whenever you happened to reopen the app, and the session ends. */
+const MAX_SESSION_MS = 2*60*60*1000;
+let staleNotice=null;
+function autoCloseStale(){
+  const a=S.active;
+  if(!a || !a.startedAt || Date.now()-a.startedAt < MAX_SESSION_MS) return false;
+  const entries=sessionEntriesFrom(a);
+  const name=activeName(a), wasJoint=a.joint;
+  let sess=null;
+  if(entries.length){
+    sess={ id:uid(), workoutId:a.workoutId, workoutName:name, profileId:a.profileId,
+      startedAt:a.startedAt, endedAt:a.startedAt+MAX_SESSION_MS,
+      durationSec:Math.round(MAX_SESSION_MS/1000), autoClosed:true, entries };
+    S.sessions.push(sess);
+  }
+  S.active=null; stopSessionTimer(); stopRest(); save();
+  if(wasJoint) endPlan();
+  // never save-as-a-template on the way out — you're not here to answer that
+  pendingTpl=null;
+  staleNotice={ name, sessId:sess?sess.id:null,
+    sets:entries.reduce((k,e)=>k+e.sets.length,0) };
+  if(route.view==="active"){ route.tab="workouts"; route.view="list"; route.id=null; }
+  return true;
+}
+// the running app's version: repaint out of the (now gone) workout, then say what happened
+function autoCloseAndShow(){
+  if(!autoCloseStale()) return false;
+  render(); showStaleNotice();
+  return true;
+}
+function showStaleNotice(){
+  const s=staleNotice; if(!s) return;
+  staleNotice=null;
+  openModal(`<h3>Workout auto-finished</h3>
+    <div class="muted" style="margin:-4px 0 16px">“${escapeHtml(s.name)}” had been running for over 2 hours, so it was
+      closed at the 2-hour mark. ${s.sessId
+        ? `Your <b>${s.sets} logged set${s.sets===1?"":"s"}</b> ${s.sets===1?"is":"are"} saved to History.`
+        : `Nothing had been logged, so there was nothing to save.`}
+      <br><br>Sessions stop there so one you forget to finish can't sit open for days — a stale
+      session would drag your next recommendation along with it.</div>
+    ${s.sessId?`<button class="btn" onclick="closeModal();gotoSession('${s.sessId}')">View it in History</button>`:""}
+    <button class="btn ${s.sessId?"ghost":""}" style="margin-top:${s.sessId?"6px":"0"}" onclick="closeModal()">OK</button>`);
 }
 
 /* After finishing, ask whether to save/update a template */
@@ -2479,6 +2597,7 @@ function startSessionTimer(){ stopSessionTimer(); sessTimer=setInterval(tickSess
 function stopSessionTimer(){ if(sessTimer) clearInterval(sessTimer); sessTimer=null; if(presHb) clearInterval(presHb); presHb=null; }
 function tickSession(){
   if(!S.active){ stopSessionTimer(); return; }
+  if(autoCloseAndShow()) return;
   const el=document.getElementById("sessDur");
   if(el) el.textContent=fmtDur((Date.now()-S.active.startedAt)/1000);
   const rd=document.getElementById("resumeDur");
@@ -3127,11 +3246,16 @@ const PLATE_KIT = {
                {w:10,c:"#27c281"},{w:5,c:"#a16bff"},{w:2.5,c:"#ff6b9d"},{w:1.25,c:"#8b93a5"}] }
 };
 const PLATE_H=[54,48,43,38,33,28,24];   // visual height per plate size, biggest first
-let pcalc={weight:null, bar:45};
+// weight/bar here are in pcalc.unit — this is a display-side tool, you read it off the bar
+let pcalc={weight:null, bar:45, unit:"lb"};
 
-function plateKit(){ return PLATE_KIT[S.units==="kg"?"kg":"lb"]; }
-function plateStep(){ const p=plateKit().plates; return p[p.length-1].w*2; }
-function barDefault(){ const bars=plateKit().bars; return bars.includes(S.barWeight)?S.barWeight:bars[0]; }
+function plateKit(u){ return PLATE_KIT[(u||pcalc.unit)==="kg"?"kg":"lb"]; }
+function plateStep(u){ const p=plateKit(u).plates; return p[p.length-1].w*2; }
+// the bar you own is remembered per unit — a 45 is not a 20
+function barDefault(u){
+  const bars=plateKit(u).bars, saved=(u==="kg")?S.barKg:S.barWeight;
+  return bars.includes(saved)?saved:bars[0];
+}
 function tidy(n){ return Math.round(n*100)/100; }
 
 /* what's already on the bar for this exercise: your last typed working weight,
@@ -3159,9 +3283,12 @@ function plateBreak(perSide){
   return out;
 }
 function plateCalc(ei){
-  const seed=plateSeed(ei);
-  pcalc={weight:seed, bar:barDefault()};
-  const kit=plateKit(), u=S.units, step=plateStep();
+  const en=S.active&&S.active.entries[ei];
+  const u=exUnit(en?en.exerciseId:null);
+  const lb=plateSeed(ei);
+  const seed=(lb==null)?null:tidy(toDisp(lb,u));
+  pcalc={weight:seed, bar:barDefault(u), unit:u};
+  const kit=plateKit(u), step=plateStep(u);
   openModal(`<h3>Plate calculator</h3>
     <div class="pcw">
       <button onclick="plateBump(-${step})">−</button>
@@ -3185,13 +3312,15 @@ function plateSetWeight(v){
   plateRender();
 }
 function plateBar(b){
-  pcalc.bar=b; S.barWeight=b; save();   // device-only setting, not synced
+  pcalc.bar=b;
+  if(pcalc.unit==="kg") S.barKg=b; else S.barWeight=b;
+  save();                               // device-only setting, not synced
   document.querySelectorAll("#pcbars .opt").forEach(o=>o.classList.toggle("on", parseFloat(o.dataset.b)===b));
   plateRender();
 }
 function plateRender(){
   const out=document.getElementById("pcout"); if(!out) return;
-  const u=S.units, w=pcalc.weight, bar=pcalc.bar, step=plateStep();
+  const u=pcalc.unit, w=pcalc.weight, bar=pcalc.bar, step=plateStep();
   if(w==null){ out.innerHTML=`<div class="pcsub">Enter a total weight to see what goes on each side.</div>`; return; }
   if(w<bar-1e-6){
     out.innerHTML=`<div class="pcline warn">Lighter than the bar</div>
@@ -3247,6 +3376,7 @@ document.addEventListener("visibilitychange",()=>{
   checkForUpdate();
   stopAlertRepeat();      // you're back — stop nagging
   clearRestNotifications();
+  autoCloseAndShow();     // iOS freezes our 1s tick when backgrounded — settle it on return
   // if iOS suspended us anyway (lock-screen audio off), settle the clock on return
   if(rest.running) tickRest();
 });
@@ -3257,9 +3387,11 @@ initNotify();
 const _dp=dedupeProfiles(), _de=dedupeExercises();
 if(_dp||_de) save();
 
-// resume an active session timer after reload
+// resume an active session timer after reload — unless it aged out while we were away
+const _stale=autoCloseStale();
 if(S.active){ startSessionTimer(); }
 render();
+if(_stale) showStaleNotice();
 // show the "who's working out?" gate only until a profile is picked on this device
 // (after that it goes straight in; tap the header title to switch later)
 if(!S.active && !S.profilePicked){ openGate(); }
@@ -3273,7 +3405,7 @@ Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGa
   addExistingExercise,createAndAddExercise,finishWorkout,cancelWorkout,deleteSession,
   tplUpdate,tplSaveNewPrompt,tplSaveNew,tplDismiss,gotoSession,howTo,rpeHelp,editGuide,saveGuide,bump,closeModal,workoutById,save,render,
   plateCalc,plateType,plateBump,plateSetWeight,plateBar,
-  exerciseOpts,ssLink,ssUnlink,tplExOpts,ssLinkTpl,ssUnlinkTpl,setRestSuperset,
+  exerciseOpts,ssLink,ssUnlink,tplExOpts,ssLinkTpl,ssUnlinkTpl,setRestSuperset,setExUnit,cycleExUnit,
   openExerciseProgress,exerciseSeries,trendOf,decomposeByExercise,consistency,confidenceOf,
   setBuzzPattern,testBuzz,buzzPattern,restBuzz,setAlertRepeat,alertRepeat,startAlertRepeat,stopAlertRepeat,
   setAlertMode,alertMode,soundOn,buzz,moveEntry,moveEntryUp,moveEntryDown,setPerSide,perSide});
