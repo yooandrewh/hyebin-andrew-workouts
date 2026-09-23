@@ -1506,6 +1506,37 @@ function swapEntryExercise(ei, newId){
   save(); closeModal(); render();
   if(!applyingPlan) markListChanged();
 }
+/* Same correction, but after the fact. A saved session's sets are plain numbers — no
+   ghosts and no recommendation to re-seed — so this only moves them onto the other lift.
+   It DOES rewrite history: the sets, their volume and any PR in them count for the new
+   exercise from now on, which is the whole point of fixing a miswrite. */
+function sessionExOpts(sessId, ei){
+  const sess=S.sessions.find(x=>x.id===sessId); if(!sess) return;
+  const en=sess.entries[ei]; if(!en) return;
+  const ex=exById(en.exerciseId);
+  const k=(en.sets||[]).length;
+  openModal(`<h3>${escapeHtml(ex?ex.name:entryName(en))}</h3>
+    <button class="btn sec" onclick="swapSessionPick('${sessId}',${ei})">🔁 Swap exercise · keeps ${k} set${k===1?"":"s"}</button>
+    <div class="muted" style="font-size:12px;margin:10px 2px 0">Logged under the wrong lift? Change the name and the
+      numbers stay exactly as they are. The sets — and any PR in them — move onto the other exercise.</div>`);
+}
+function swapSessionPick(sessId, ei){
+  pickTarget={type:"swapSession", id:sessId, ei}; pickSs=false; pickSsSel=[];
+  pickExercise();
+}
+function swapSessionExercise(sessId, ei, newId){
+  const sess=S.sessions.find(x=>x.id===sessId); if(!sess) return;
+  const en=sess.entries[ei]; if(!en) return;
+  if(en.exerciseId===newId){ closeModal(); render(); return; }
+  if(sess.entries.some((e,i)=>i!==ei && e.exerciseId===newId)){
+    const nx=exById(newId);
+    alert(`${nx?nx.name:"That exercise"} is already in this session. Pick a different lift.`);
+    return;
+  }
+  en.exerciseId=newId;
+  delete en.exName;   // a cached name from an older build would outrank the new exercise
+  save(); closeModal(); render();
+}
 function setPerSide(exId, on){
   const ex=exById(exId); if(!ex) return;
   ex.perSide=!!on; save(); buzz(20); render();
@@ -1723,7 +1754,10 @@ function viewSessionDetail(id){
       <div class="row between"><div>
         <div class="exname">${ssBadge(r)}${escapeHtml(entryName(en))}</div>
         <div class="exsub">${escapeHtml(e?e.equipment:"")}</div></div>
-        ${e?`<button class="howbtn" onclick="howTo('${en.exerciseId}')">▶ How-to</button>`:""}
+        <div class="row" style="gap:8px">
+          ${e?`<button class="howbtn" onclick="howTo('${en.exerciseId}')">▶ How-to</button>`:""}
+          <button class="delset" style="font-size:20px" onclick="sessionExOpts('${s.id}',${i})">⋯</button>
+        </div>
       </div>
       <table class="setgrid" style="margin-top:8px"><thead><tr>
         <th class="setno">Set</th><th>${eu}</th><th>Reps</th><th>RPE</th></tr></thead><tbody>
@@ -2115,7 +2149,17 @@ function pickExercise(prefill){
 }
 // the entry a swap is aimed at — null unless the picker was opened from "Swap exercise"
 function swapEntry(){
-  return (pickTarget.type==="swap" && S.active) ? (S.active.entries[pickTarget.ei]||null) : null;
+  const sib=swapSiblings();
+  return sib.length ? (sib[pickTarget.ei]||null) : null;
+}
+// the other entries it shares a workout with, live or finished — two cards for one lift is never right
+function swapSiblings(){
+  if(pickTarget.type==="swap") return (S.active&&S.active.entries)||[];
+  if(pickTarget.type==="swapSession"){
+    const s=S.sessions.find(x=>x.id===pickTarget.id);
+    return (s&&s.entries)||[];
+  }
+  return [];
 }
 /* the running selection, in the order you tapped it */
 function ssPickToggle(exId){
@@ -2166,7 +2210,7 @@ function libRow(ex){
   const at = pickSs ? pickSsSel.indexOf(ex.id) : -1;
   const sw = swapEntry();
   // swapping onto a lift that's already its own card in this workout would make two of it
-  const taken = !!(sw && S.active.entries.some(e=>e!==sw && e.exerciseId===ex.id));
+  const taken = !!(sw && swapSiblings().some(e=>e!==sw && e.exerciseId===ex.id));
   const isSelf = !!(sw && sw.exerciseId===ex.id);
   const tag = taken ? "in workout" : isSelf ? "current" : sw ? "🔁 swap" : pickSs ? (at>=0?`${at+1} ✓`:"＋ pick") : "＋ add";
   return `<div class="libitem${at>=0?' on':''}" style="${taken||isSelf?"opacity:.45":""}"
@@ -2213,6 +2257,7 @@ function selected(group){ const el=document.querySelector(`#${group} .opt.on`); 
 
 function addExistingExercise(exId){
   if(pickTarget.type==="swap"){ return swapEntryExercise(pickTarget.ei, exId); }
+  if(pickTarget.type==="swapSession"){ return swapSessionExercise(pickTarget.id, pickTarget.ei, exId); }
   if(pickTarget.type==="template"){
     const w=workoutById(pickTarget.id);
     if(w && !w.exerciseIds.includes(exId)) w.exerciseIds.push(exId);
@@ -3466,7 +3511,7 @@ Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGa
   addExistingExercise,createAndAddExercise,finishWorkout,cancelWorkout,deleteSession,
   tplUpdate,tplSaveNewPrompt,tplSaveNew,tplDismiss,gotoSession,howTo,rpeHelp,editGuide,saveGuide,bump,closeModal,workoutById,save,render,
   plateCalc,plateType,plateBump,plateSetWeight,plateBar,
-  exerciseOpts,ssLink,ssUnlink,tplExOpts,ssLinkTpl,ssUnlinkTpl,setRestSuperset,setExUnit,cycleExUnit,swapExercise,swapEntryExercise,
+  exerciseOpts,ssLink,ssUnlink,tplExOpts,ssLinkTpl,ssUnlinkTpl,setRestSuperset,setExUnit,cycleExUnit,swapExercise,swapEntryExercise,sessionExOpts,swapSessionPick,swapSessionExercise,
   openExerciseProgress,exerciseSeries,trendOf,decomposeByExercise,consistency,confidenceOf,
   setBuzzPattern,testBuzz,buzzPattern,restBuzz,setAlertRepeat,alertRepeat,startAlertRepeat,stopAlertRepeat,
   setAlertMode,alertMode,soundOn,buzz,moveEntry,moveEntryUp,moveEntryDown,setPerSide,perSide});
