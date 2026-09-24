@@ -467,7 +467,7 @@ window.onCloudData=function(remote){
   S.exercises = mergeArrById(S.exercises, remote.exercises);
   S.workouts  = mergeArrById(S.workouts,  remote.workouts);
   S.sessions  = mergeArrById(S.sessions,  remote.sessions);
-  const purged=purgeTestData();
+  const purged=purgeTestData()|applyProgramGoals();
   if(remote.restDefault!=null) S.restDefault=remote.restDefault;       // shared rest length
   if(remote.restSuperset!=null) S.restSuperset=remote.restSuperset;    // …and superset rest
   dedupeProfiles();   // collapse any duplicate profiles introduced by the merge
@@ -802,7 +802,9 @@ function recommend(pid, exId){
   return { working:Array.from({length:nSets},()=>({w:"", r:repsLow, rpe:g.rpe||null})), warmups:[],
     note: assisted
       ? `First time — pick a help level you can do <b>${repsLow===repsHigh?repsLow:repsLow+"–"+repsHigh} reps</b> with, then we'll strip it off.`
-      : `First time — aim <b>${repsLow===repsHigh?repsLow:repsLow+"–"+repsHigh} reps</b>, then we'll progress next time.` };
+      : (()=>{ const c=closestDone(pid,ex), aim=repsLow===repsHigh?repsLow:repsLow+"–"+repsHigh;
+          return c ? `First time on this one — closest thing you've done is <b>${escapeHtml(c.ex.name)}</b> (${fmtSets(c.sets,exUnit(c.ex))} ${exUnit(c.ex)}). Start lighter than that, aim <b>${aim} reps</b>.`
+                   : `First time — aim <b>${aim} reps</b>, then we'll progress next time.`; })() };
 }
 /* What the workout in progress is called: a name you typed for this session, else the
    template it came from, else the day. Whatever this says is what lands in History. */
@@ -1753,6 +1755,7 @@ function viewActive(){
       : (pr?`🏆 PR: ${setLabel(pr,u)}`:"");
     html += `</tbody></table>
       ${prTxt?`<div class="prline">${escapeHtml(prTxt)}</div>`:""}
+      ${prev?`<div class="recnote"><span>⟲</span><span>Last time: <b>${fmtSets(prev,u)} ${u}</b></span></div>`:""}
       ${rec.note?`<div class="recnote"><span>↗</span><span>${rec.note}</span></div>`:""}
       <div class="cardfoot">
         <button class="addset" onclick="addSet(${ei})">+ Add Set</button>
@@ -3600,6 +3603,27 @@ const PROGRAM_WARM={"Bench Press":3,"Barbell Row":3,"DB Lateral Raise":1,"Pull-U
  "Lat Pulldown":2,"Overhead Barbell Press":3,"Dumbbell Row":2,"Flat Dumbbell Press":2,"Reverse Pec Deck":1,
  "Triceps Pressdown":1,"Bayesian Cable Curl":1,"Barbell Back Squat":3,"45° Back Extension":2,"Leg Extension":2,
  "Seated Leg Curl":2,"Standing Calf Raise":1,"Roman Chair Leg Raise":1};
+/* Program lifts you've never logged -> what you did before that's the closest match, so you
+   can start from a real number. Names are matched against your library, not assumed. */
+const PROGRAM_SIMILAR={"Glute Ham Raise":["hip thrust","leg curl","back extension"],"Barbell Row":["row"],
+ "Pull-Up":["pull up","lat pulldown"],"Pec Deck":["chest fly","fly"],"Cable Crunch":["crunch"],
+ "Reverse Pec Deck":["deltoid fly","rear delt"],"Overhead Barbell Press":["military press","overhead press","shoulder press"],
+ "Roman Chair Leg Raise":["hanging leg raise","leg raise"],"Barbell Back Squat":["squat"],
+ "Leg Extension":["leg press"],"Seated Leg Curl":["leg curl","hip thrust"],"45° Back Extension":["back extension","hip thrust","deadlift"],
+ "Standing Calf Raise":["calf"],"Seated Calf Raise":["calf"],"Bayesian Cable Curl":["curl"],"Preacher Curl":["curl"],
+ "Triceps Pressdown":["tricep","pressdown"],"EZ-Bar Skullcrusher":["skull","tricep"],"DB Lateral Raise":["lateral raise","deltoid"],
+ "Flat Dumbbell Press":["bench","chest"],"Bench Press":["bench","chest press"],"Lat Pulldown":["pulldown","pull up"],
+ "Dumbbell Row":["row"],"Deadlift":["deadlift","rdl"],"Leg Press":["leg press"]};
+function closestDone(pid, ex){
+  const keys=PROGRAM_SIMILAR[ex&&ex.name]||[];
+  const cands=S.exercises.filter(e=>e.id!==ex.id && keys.some(k=>e.name.toLowerCase().includes(k)));
+  for(const c of cands){
+    const sets=recentSetsFor(pid,c.id,1)[0];
+    if(sets) return {ex:c, sets};
+  }
+  return null;
+}
+const fmtSets=(sets,u)=>sets.map(x=>`${dispW(x.weight,u)||0}×${x.reps||0}`).join(", ");
 function seedProgram(){
   if(S.programSeeded) return false;
   PROGRAM.forEach(p=>{
@@ -3617,8 +3641,19 @@ function seedProgram(){
   });
   S.programSeeded=true; save(); return true;
 }
+// re-give any program lift its sets/reps/RPE/warm-up goal if a merge or dedupe left it without one
+function applyProgramGoals(){
+  let ch=false;
+  PROGRAM.forEach(p=>p.ex.forEach(([name,eq,ang,sets,lo,hi,rpe])=>{
+    const ex=findExercise(name,eq,ang);
+    if(ex && (!ex.goal || (ex.goal.repsLow==null && ex.goal.repsHigh==null))){
+      ex.goal={sets,repsLow:lo,repsHigh:hi,rpe,warm:PROGRAM_WARM[name],notes:(ex.goal&&ex.goal.notes)||""}; ch=true;
+    }
+  }));
+  return ch;
+}
 seedProgram();
-if(purgeTestData()) save();
+if(purgeTestData()|applyProgramGoals()) save();
 
 // resume an active session timer after reload — unless it aged out while we were away
 const _stale=autoCloseStale();
