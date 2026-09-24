@@ -38,8 +38,17 @@ Tapping ✓ commits it; typing overrides it. Untouched/unchecked sets are **not*
 - 2–3 working sets, 1–2 RIR on early sets, last set near failure.
 - **RPE is optional** — if it's missing, assume the target was met and progress anyway.
   Never block progression on a forgotten RPE.
-- **Warmups**: 2 sets at ~50% then ~70% of working weight, same target reps. Excluded from
-  volume and PRs. Skip entirely for light/bodyweight work (under ~50 lb).
+- **Warmups**: the count is stored per exercise (`ex.goal.warm`, 0-3, edited in the goal sheet).
+  Ramp off the working weight: 1 -> 60%; 2 -> 50%/70%; 3 -> 40%/60%/80%; same target reps.
+  No stored count -> 2 sets (50%/70%). Skip entirely under ~50 lb. Excluded from volume and PRs.
+- **Reference session**: progression reads your last 3 sessions of the lift. If the latest is
+  under 90% of the best of those (by e1RM) it was a deload/off day, so progress from the best.
+- **Program**: Upper #1/#2 and Lower #1/#2 are seeded once (`PROGRAM` in index.html) with stable
+  `prog-*` ids. Slots with no history of their own are relinked to the plainer name you already log
+  (`PROGRAM_ALIAS`); history is never rewritten. Only the early RPE and top warm-up count are stored;
+  per-exercise rest times are not (one global rest, one superset rest).
+- **Units**: weights are always stored in lb; `ex.unit` ("kg"/"lb") only changes display and entry.
+- **Sessions**: an unfinished workout auto-closes at 2 hours (saved at start + 2h).
 
 ## Conventions
 
