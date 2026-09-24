@@ -1566,6 +1566,21 @@ function sessionExOpts(sessId, ei){
     <div class="muted" style="font-size:12px;margin:10px 2px 0">Logged under the wrong lift? Change the name and the
       numbers stay exactly as they are. The sets — and any PR in them — move onto the other exercise.</div>`);
 }
+// swap one exercise in a template for another, keeping its slot and any superset it's in
+function swapTplPick(wid, exId){
+  const w=workoutById(wid); if(!w) return;
+  pickTarget={type:"swapTpl", wid, ei:w.exerciseIds.indexOf(exId)}; pickSs=false; pickSsSel=[];
+  pickExercise();
+}
+function swapTemplateExercise(wid, ei, newId){
+  const w=workoutById(wid); if(!w) return;
+  const oldId=w.exerciseIds[ei]; if(oldId==null) return;
+  if(oldId===newId){ closeModal(); render(); return; }
+  if(w.exerciseIds.includes(newId)){ alert("That exercise is already in this template. Pick a different one."); return; }
+  w.exerciseIds[ei]=newId;
+  if(w.ss && w.ss[oldId]){ w.ss[newId]=w.ss[oldId]; delete w.ss[oldId]; }
+  save(); closeModal(); render();
+}
 function swapSessionPick(sessId, ei){
   pickTarget={type:"swapSession", id:sessId, ei}; pickSs=false; pickSsSel=[];
   pickExercise();
@@ -1598,6 +1613,7 @@ function tplExOpts(wid, exId){
   const r=tplRuns(w)[i];
   const cands=w.exerciseIds.filter(id=>id!==exId && !(w.ss&&w.ss[id]));
   openModal(`<h3>${escapeHtml(ex?ex.name:"Exercise")}</h3>
+    <button class="btn sec" style="margin-bottom:12px" onclick="swapTplPick('${wid}','${exId}')">🔁 Swap exercise</button>
     ${r?`<div class="muted" style="margin:-4px 0 12px">In <b>superset ${r.letter}</b> (${r.pos+1} of ${r.size}).</div>
       <button class="btn sec" onclick="ssUnlinkTpl('${wid}','${exId}')">🔗 Leave superset ${r.letter}</button>
       <div class="divider"></div>`:""}
@@ -2207,6 +2223,10 @@ function swapEntry(){
 // the other entries it shares a workout with, live or finished — two cards for one lift is never right
 function swapSiblings(){
   if(pickTarget.type==="swap") return (S.active&&S.active.entries)||[];
+  if(pickTarget.type==="swapTpl"){
+    const w=workoutById(pickTarget.wid);
+    return w ? w.exerciseIds.map(id=>({exerciseId:id})) : [];
+  }
   if(pickTarget.type==="swapSession"){
     const s=S.sessions.find(x=>x.id===pickTarget.id);
     return (s&&s.entries)||[];
@@ -2262,7 +2282,7 @@ function libRow(ex){
   const at = pickSs ? pickSsSel.indexOf(ex.id) : -1;
   const sw = swapEntry();
   // swapping onto a lift that's already its own card in this workout would make two of it
-  const taken = !!(sw && swapSiblings().some(e=>e!==sw && e.exerciseId===ex.id));
+  const taken = !!(sw && swapSiblings().some(e=>e.exerciseId===ex.id && ex.id!==sw.exerciseId));
   const isSelf = !!(sw && sw.exerciseId===ex.id);
   const tag = taken ? "in workout" : isSelf ? "current" : sw ? "🔁 swap" : pickSs ? (at>=0?`${at+1} ✓`:"＋ pick") : "＋ add";
   return `<div class="libitem${at>=0?' on':''}" style="${taken||isSelf?"opacity:.45":""}"
@@ -2309,6 +2329,7 @@ function selected(group){ const el=document.querySelector(`#${group} .opt.on`); 
 
 function addExistingExercise(exId){
   if(pickTarget.type==="swap"){ return swapEntryExercise(pickTarget.ei, exId); }
+  if(pickTarget.type==="swapTpl"){ return swapTemplateExercise(pickTarget.wid, pickTarget.ei, exId); }
   if(pickTarget.type==="swapSession"){ return swapSessionExercise(pickTarget.id, pickTarget.ei, exId); }
   if(pickTarget.type==="template"){
     const w=workoutById(pickTarget.id);
@@ -3617,7 +3638,7 @@ Object.assign(window,{go,switchProfile,addProfile,saveProfile,toggleTheme,openGa
   addExistingExercise,createAndAddExercise,finishWorkout,cancelWorkout,deleteSession,
   tplUpdate,tplSaveNewPrompt,tplSaveNew,tplDismiss,gotoSession,howTo,rpeHelp,editGuide,saveGuide,bump,closeModal,workoutById,save,render,
   plateCalc,plateType,plateBump,plateSetWeight,plateBar,
-  exerciseOpts,ssLink,ssUnlink,tplExOpts,ssLinkTpl,ssUnlinkTpl,setRestSuperset,setExUnit,cycleExUnit,swapExercise,swapEntryExercise,sessionExOpts,swapSessionPick,swapSessionExercise,
+  exerciseOpts,ssLink,ssUnlink,tplExOpts,ssLinkTpl,ssUnlinkTpl,setRestSuperset,setExUnit,cycleExUnit,swapExercise,swapEntryExercise,sessionExOpts,swapTplPick,swapSessionPick,swapSessionExercise,
   openExerciseProgress,exerciseSeries,trendOf,decomposeByExercise,consistency,confidenceOf,
   setBuzzPattern,testBuzz,buzzPattern,restBuzz,setAlertRepeat,alertRepeat,startAlertRepeat,stopAlertRepeat,
   setAlertMode,alertMode,soundOn,buzz,moveEntry,moveEntryUp,moveEntryDown,setPerSide,perSide});
