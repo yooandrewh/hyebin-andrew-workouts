@@ -622,6 +622,31 @@ function lastSetsFor(profileId, exerciseId){
   return null;
 }
 
+/* The last few sessions of a lift, newest first by end time (array order isn't reliable
+   once a synced device merges in). */
+function recentSetsFor(profileId, exerciseId, n){
+  const out=[];
+  S.sessions.filter(x=>x.profileId===profileId).sort((a,b)=>b.endedAt-a.endedAt).forEach(sess=>{
+    if(out.length>=n) return;
+    const e=sess.entries.find(en=>en.exerciseId===exerciseId);
+    const w=e&&e.sets.filter(st=>!st.warmup);
+    if(w&&w.length) out.push(w);
+  });
+  return out;
+}
+const topE1=sets=>Math.max(0,...sets.map(x=>e1rm(x.weight,x.reps)));
+/* Progress off your real level, not your last mood. If the most recent session came in well
+   under the best of the last three (a deload, a bad night, a light day), recommending
+   "last + 1 rep" would ratchet you DOWN. So when last time was under 90% of your recent best
+   by estimated 1RM, progress from that best session instead. */
+function referenceSets(profileId, exerciseId, assisted){
+  const rs=recentSetsFor(profileId, exerciseId, 3);
+  if(!rs.length) return null;
+  if(assisted || rs.length<2) return rs[0];
+  const best=rs.reduce((a,b)=>topE1(b)>topE1(a)?b:a);
+  return topE1(rs[0]) < 0.9*topE1(best) ? best : rs[0];
+}
+
 /* ---------- assisted lifts ----------
    On an assisted pull-up/dip machine (or with a band), the number you log is HELP, not load —
    so less weight is progress, not regress. Everything that reads a weight for progression,
@@ -716,7 +741,7 @@ function recommend(pid, exId){
   const repsLow = g.repsLow || g.repsHigh || 8;
   const repsHigh = g.repsHigh || g.repsLow || 12;
   const assisted = isAssisted(ex);
-  const last=lastSetsFor(pid, exId);
+  const last=referenceSets(pid, exId, assisted);
   if(last && last.length){
     const nSets = g.sets || last.length;
     const wWeight = workingWeightOf(last, assisted);
@@ -746,7 +771,7 @@ function recommend(pid, exId){
       const target=working.map(s=>s.r).join("/");
       const at = assisted ? (wWeight>0 ? dispW(wWeight,u)+" "+u+" help × " : "bodyweight × ") : (wWeight?dispW(wWeight,u)+" "+u+" × ":"");
       const then = assisted ? `Cut assistance once all sets reach ${repsHigh}.` : `Add weight once all sets reach ${repsHigh}.`;
-      note=`Beat last time: <b>${at}${target}</b>${lastRpe?" (last RPE "+lastRpe+")":""}. ${then}`;
+      note=`Minimum to progress: <b>${at}${target}</b>${lastRpe?" (last RPE "+lastRpe+")":""}. ${then}`;
     }
     const todayW = (working[0] && working[0].w) ? working[0].w : wWeight;
     // assisted work is already the easy end of the movement — no ramp-up sets
@@ -1747,9 +1772,15 @@ function viewSessionDetail(id){
     <div class="h1" style="margin-bottom:4px">${escapeHtml(s.workoutName)}</div>
     <button class="btn ghost sm" style="width:auto;flex:0 0 auto" onclick="renameSession('${s.id}')">✏️ Rename</button></div>`;
   html+=`<div class="sub" style="margin:0 2px 14px">${fmtDate(s.endedAt)}${s.startedAt?` · ${timeOf(s.startedAt)}–${timeOf(s.endedAt)}`:""} · ⏱ ${fmtDur(s.durationSec)} · ${sessionVolume(s).toLocaleString()} ${S.units}</div>`;
-  const runs=ssRuns(s.entries.map(en=>en.ss||null));
-  html+=s.entries.map((en,i)=>{
-    const e=exById(en.exerciseId), r=runs[i], eu=exUnit(en.exerciseId);
+  /* A workout built by tapping "Add Exercise" stacks each new lift ON TOP, so it was saved
+     newest-first. Sessions from a template (or saved since this fix) are already in doing
+     order; the rest are shown reversed so History reads first exercise to last. */
+  const flip = !s.workoutId && !s.chrono;
+  const order = s.entries.map((_,i)=>i); if(flip) order.reverse();
+  const runs=ssRuns(order.map(i=>s.entries[i].ss||null));
+  html+=order.map((i,pos)=>{
+    const en=s.entries[i];
+    const e=exById(en.exerciseId), r=runs[pos], eu=exUnit(en.exerciseId);
     return `${ssOpen(r)}<div class="card">
       <div class="row between"><div>
         <div class="exname">${ssBadge(r)}${escapeHtml(entryName(en))}</div>
@@ -2305,8 +2336,9 @@ function finishWorkout(){
     cancelWorkout(true); return;
   }
   const w=workoutById(a.workoutId);
+  if(!a.workoutId) entries.reverse();   // stacked newest-first while logging; store first-to-last
   const sess={ id:uid(), workoutId:a.workoutId, workoutName:activeName(a),
-    profileId:a.profileId, startedAt:a.startedAt, endedAt:Date.now(),
+    profileId:a.profileId, startedAt:a.startedAt, endedAt:Date.now(), chrono:true,
     durationSec:Math.round((Date.now()-a.startedAt)/1000), entries };
   S.sessions.push(sess);
   const sourceId=a.workoutId, wasJoint=a.joint;
@@ -2326,12 +2358,13 @@ function autoCloseStale(){
   const a=S.active;
   if(!a || !a.startedAt || Date.now()-a.startedAt < MAX_SESSION_MS) return false;
   const entries=sessionEntriesFrom(a);
+  if(!a.workoutId) entries.reverse();
   const name=activeName(a), wasJoint=a.joint;
   let sess=null;
   if(entries.length){
     sess={ id:uid(), workoutId:a.workoutId, workoutName:name, profileId:a.profileId,
       startedAt:a.startedAt, endedAt:a.startedAt+MAX_SESSION_MS,
-      durationSec:Math.round(MAX_SESSION_MS/1000), autoClosed:true, entries };
+      durationSec:Math.round(MAX_SESSION_MS/1000), autoClosed:true, chrono:true, entries };
     S.sessions.push(sess);
   }
   S.active=null; stopSessionTimer(); stopRest(); save();
@@ -3492,6 +3525,49 @@ initNotify();
 // one-time cleanup of any legacy duplicate profiles
 const _dp=dedupeProfiles(), _de=dedupeExercises();
 if(_dp||_de) save();
+
+/* The Upper/Lower program. Stable ids everywhere, so both phones seeding it converge on
+   the same records instead of duplicating (merge is by id). Existing library exercises are
+   reused by name+equipment+angle and just get the program's goal. Rest times are per-app
+   (one global rest + superset rest), so the per-exercise rests aren't stored. */
+const PROGRAM=[
+ {id:"prog-upper1",name:"Upper #1",ex:[
+  ["Bench Press","Barbell","Flat",3,3,5,7],["Barbell Row","Barbell","None",3,8,10,7],
+  ["DB Lateral Raise","Dumbbell","None",3,12,15,8],["Pull-Up","Bodyweight","None",3,8,10,7],
+  ["Pec Deck","Machine","None",2,15,20,8],["Preacher Curl","Machine","None",3,12,15,8,"a"],
+  ["EZ-Bar Skullcrusher","Barbell","None",3,12,15,8,"a"]]},
+ {id:"prog-lower1",name:"Lower #1",ex:[
+  ["Deadlift","Barbell","None",3,3,5,6],["Leg Press","Machine","None",3,6,8,7],
+  ["Glute Ham Raise","Machine","None",3,8,10,7],["Seated Calf Raise","Machine","None",3,10,12,8],
+  ["Cable Crunch","Cables","None",3,10,12,8]]},
+ {id:"prog-upper2",name:"Upper #2",ex:[
+  ["Lat Pulldown","Cables","None",3,10,12,7],["Overhead Barbell Press","Barbell","None",3,6,8,7],
+  ["Dumbbell Row","Dumbbell","None",3,10,12,7],["Flat Dumbbell Press","Dumbbell","Flat",3,8,10,7],
+  ["Reverse Pec Deck","Machine","None",3,10,12,8],["Triceps Pressdown","Cables","None",3,10,12,8,"a"],
+  ["Bayesian Cable Curl","Cables","None",3,10,12,8,"a"]]},
+ {id:"prog-lower2",name:"Lower #2",ex:[
+  ["Barbell Back Squat","Barbell","None",3,3,5,6],["45° Back Extension","Machine","None",3,8,10,7],
+  ["Leg Extension","Machine","None",2,10,12,8],["Seated Leg Curl","Machine","None",2,10,12,8],
+  ["Standing Calf Raise","Machine","None",3,12,15,8],["Roman Chair Leg Raise","Bodyweight","None",3,10,20,8]]}
+];
+function seedProgram(){
+  if(S.programSeeded) return false;
+  PROGRAM.forEach(p=>{
+    const w=workoutById(p.id)||(S.workouts.push({id:p.id,name:p.name,exerciseIds:[],createdAt:Date.now()}),workoutById(p.id));
+    w.exerciseIds=[]; w.ss={};
+    p.ex.forEach(([name,eq,ang,sets,lo,hi,rpe,grp])=>{
+      let ex=findExercise(name,eq,ang);
+      if(!ex){ ex={id:"prog-"+exKey(name).slice(0,40),name,equipment:eq,angle:ang,goal:null,assisted:false}; S.exercises.push(ex); }
+      ex.goal={sets,repsLow:lo,repsHigh:hi,rpe,notes:(ex.goal&&ex.goal.notes)||""};
+      w.exerciseIds.push(ex.id);
+      if(grp) w.ss[ex.id]="prog-ss-"+p.id;
+    });
+    if(!Object.keys(w.ss).length) w.ss=null;
+    ssNormalizeTpl(w);
+  });
+  S.programSeeded=true; save(); return true;
+}
+seedProgram();
 
 // resume an active session timer after reload — unless it aged out while we were away
 const _stale=autoCloseStale();
