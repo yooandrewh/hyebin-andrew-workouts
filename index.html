@@ -467,7 +467,7 @@ window.onCloudData=function(remote){
   S.exercises = mergeArrById(S.exercises, remote.exercises);
   S.workouts  = mergeArrById(S.workouts,  remote.workouts);
   S.sessions  = mergeArrById(S.sessions,  remote.sessions);
-  const purged=purgeTestData()|applyProgramGoals();
+  const purged=purgeTestData()|relinkProgram()|applyProgramGoals();
   if(remote.restDefault!=null) S.restDefault=remote.restDefault;       // shared rest length
   if(remote.restSuperset!=null) S.restSuperset=remote.restSuperset;    // …and superset rest
   dedupeProfiles();   // collapse any duplicate profiles introduced by the merge
@@ -1677,13 +1677,31 @@ function viewTemplate(id){
           <button class="howbtn" onclick="howTo('${exId}')">▶ How-to</button>
           <button class="delset" style="font-size:20px" onclick="tplExOpts('${id}','${exId}')">⋯</button>
         </div>
-      </div>${guideBanner(e)}</div>${ssClose(r)}`;
+      </div>${guideBanner(e)}${planLines(S.currentProfileId, exId)}</div>${ssClose(r)}`;
     }).join("");
   }
   html+=`<button class="btn sec" onclick="pickExerciseForTemplate('${id}')">+ Add Exercise</button>`;
   html+=`<button class="btn" style="margin-top:10px" onclick="startWorkout('${id}')">Start Workout ▶</button>`;
   html+=`<button class="btn danger" style="margin-top:10px" onclick="deleteWorkout('${id}')">Delete template</button>`;
   return html;
+}
+/* The workout laid out as a plan: for each exercise, what you did last time and what to load
+   today — warm-ups, then the working sets. Shown on the template so you can read the whole
+   session before you start. */
+function planLines(pid, exId){
+  const ex=exById(exId), u=exUnit(ex), rec=recommend(pid, exId), last=lastSetsFor(pid, exId);
+  const out=[];
+  if(last) out.push(`<span>⟲</span><span>Last time: <b>${fmtSets(last,u)} ${u}</b></span>`);
+  const wu=(rec.warmups||[]).map(x=>`${dispW(x.w,u)}×${x.r}`).join(" → ");
+  if(wu) out.push(`<span>🔥</span><span>Warm-up: <b>${wu} ${u}</b></span>`);
+  const groups=[]; (rec.working||[]).forEach(x=>{
+    const bw=last && last.length && last.every(z=>!Number(z.weight));   // logged at 0 = bodyweight
+    const t=(x.w===""||x.w==null) ? (bw?`bodyweight × ${x.r}`:`? × ${x.r}`) : `${dispW(x.w,u)} ${u} × ${x.r}`;
+    const g=groups[groups.length-1]; if(g && g.t===t) g.n++; else groups.push({t,n:1});
+  });
+  if(groups.length) out.push(`<span>🎯</span><span>Today: <b>${groups.map(g=>`${g.n} × ${g.t}`).join(", ")}</b>${
+    groups.some(g=>g.t.startsWith("?"))?" — no weight yet, pick one for set 1":""}</span>`);
+  return out.map(l=>`<div class="recnote">${l}</div>`).join("") + (rec.note?`<div class="recnote"><span>↗</span><span>${rec.note}</span></div>`:"");
 }
 function shortName(exId){ const e=exById(exId); if(!e) return "?"; const a=(e.angle&&e.angle!=="None")?e.angle[0]+". ":""; return a+e.name; }
 
@@ -3641,6 +3659,40 @@ function seedProgram(){
   });
   S.programSeeded=true; save(); return true;
 }
+/* The program's lifts vs the names you already log under. Where a program slot has no history
+   of its own but you've logged the same lift under a plainer name ("Row" for Barbell Row),
+   point the slot at that exercise so its Prev, ghosts and PR carry over. History is never
+   rewritten — only which exercise the template slot points at — and it only touches slots
+   still on a program-made ("prog-") exercise, so a slot you swapped yourself is left alone. */
+const PROGRAM_ALIAS={"Barbell Row":["Row"],"Pull-Up":["Pull Up"],"Barbell Back Squat":["Squat"],
+ "DB Lateral Raise":["Lateral Raise"],"Cable Crunch":["Crunch"],"Seated Leg Curl":["Leg Curl"],
+ "45° Back Extension":["Back Extension"],"Leg Extension":["Leg Extension"],
+ "Overhead Barbell Press":["Military Press"],"Reverse Pec Deck":["Deltoid Fly"]};
+function relinkProgram(){
+  const uses=id=>S.sessions.reduce((n,x)=>n+(x.entries||[]).filter(e=>e.exerciseId===id).length,0);
+  let ch=false;
+  PROGRAM.forEach(p=>{
+    const w=workoutById(p.id); if(!w) return;
+    p.ex.forEach(([name,eq,ang,sets,lo,hi,rpe])=>{
+      const al=PROGRAM_ALIAS[name]; if(!al) return;
+      const slot=w.exerciseIds.findIndex(id=>{ const e=exById(id); return e && String(id).startsWith("prog-") && exKey(e.name)===exKey(name); });
+      if(slot<0) return;
+      const oldId=w.exerciseIds[slot];
+      if(uses(oldId)>0) return;                       // it has its own history — leave it
+      const cands=S.exercises.filter(e=>e.id!==oldId && !w.exerciseIds.includes(e.id) && al.some(a=>exKey(a)===exKey(e.name)) && uses(e.id)>0)
+        .sort((a,b)=>uses(b.id)-uses(a.id));
+      const hit=cands[0]; if(!hit) return;
+      w.exerciseIds[slot]=hit.id;
+      if(w.ss && w.ss[oldId]){ w.ss[hit.id]=w.ss[oldId]; delete w.ss[oldId]; }
+      const old=exById(oldId);
+      if(!hit.goal && old) hit.goal=old.goal;         // the program's sets/reps/RPE/warm-ups come along
+      const stillUsed=S.workouts.some(x=>(x.exerciseIds||[]).includes(oldId)) || uses(oldId)>0;
+      if(!stillUsed) S.exercises=S.exercises.filter(e=>e.id!==oldId);
+      ch=true;
+    });
+  });
+  return ch;
+}
 // re-give any program lift its sets/reps/RPE/warm-up goal if a merge or dedupe left it without one
 function applyProgramGoals(){
   let ch=false;
@@ -3653,7 +3705,7 @@ function applyProgramGoals(){
   return ch;
 }
 seedProgram();
-if(purgeTestData()|applyProgramGoals()) save();
+if(purgeTestData()|relinkProgram()|applyProgramGoals()) save();
 
 // resume an active session timer after reload — unless it aged out while we were away
 const _stale=autoCloseStale();
