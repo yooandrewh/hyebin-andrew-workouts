@@ -438,6 +438,22 @@ function safeSsMap(m){
   Object.keys(m).forEach(k=>{ if(safeId(k) && safeId(m[k])) o[k]=m[k]; });
   return Object.keys(o).length ? o : null;
 }
+/* One-time cleanup of test records that a dev session pushed into the shared doc on
+   2026-09-07: two "Push/Pull" sessions, the "Push/Pull" template, and the unused "squat"
+   exercise. Runs after every merge because the other phone still holds these locally and
+   would otherwise push them straight back. The exercises bench/dbrow are NOT touched —
+   real workouts have since been logged against them. Ids AND names must both match. */
+function purgeTestData(){
+  const badSess=new Set(["s1","mtrr48rqhm98v"]);
+  const n0=S.sessions.length+S.workouts.length+S.exercises.length;
+  S.sessions=S.sessions.filter(x=>!(badSess.has(x.id) && x.workoutName==="Push/Pull" && x.profileId==="andrew"));
+  S.workouts=S.workouts.filter(w=>!(w.id==="w1" && w.name==="Push/Pull"));
+  const used=id=>S.sessions.some(x=>x.entries.some(e=>e.exerciseId===id))
+    || S.workouts.some(w=>(w.exerciseIds||[]).includes(id))
+    || (S.active&&S.active.entries.some(e=>e.exerciseId===id));
+  S.exercises=S.exercises.filter(e=>!(e.id==="squat" && e.name==="Back Squat" && !used("squat")));
+  return S.sessions.length+S.workouts.length+S.exercises.length!==n0;
+}
 // called by the Firebase module when remote data changes
 window.onCloudData=function(remote){
   if(!remote) return;
@@ -451,6 +467,7 @@ window.onCloudData=function(remote){
   S.exercises = mergeArrById(S.exercises, remote.exercises);
   S.workouts  = mergeArrById(S.workouts,  remote.workouts);
   S.sessions  = mergeArrById(S.sessions,  remote.sessions);
+  const purged=purgeTestData();
   if(remote.restDefault!=null) S.restDefault=remote.restDefault;       // shared rest length
   if(remote.restSuperset!=null) S.restSuperset=remote.restSuperset;    // …and superset rest
   dedupeProfiles();   // collapse any duplicate profiles introduced by the merge
@@ -462,7 +479,7 @@ window.onCloudData=function(remote){
   render();
   if(S.active && S.active.joint) applyPlan();  // now that exercises synced, add any joint ones
   // if we held data the cloud didn't have, push our superset so the other phone gets it
-  if(extra && window.cloudPush){ try{ window.cloudPush(syncedState()); }catch(e){} }
+  if((extra||purged) && window.cloudPush){ try{ window.cloudPush(syncedState()); }catch(e){} }
 };
 window.onCloudReady=function(){ setSync("✓ cloud connected"); };
 window.setSyncErr=function(){ setSync("⚠ offline"); };
@@ -3580,6 +3597,7 @@ function seedProgram(){
   S.programSeeded=true; save(); return true;
 }
 seedProgram();
+if(purgeTestData()) save();
 
 // resume an active session timer after reload — unless it aged out while we were away
 const _stale=autoCloseStale();
