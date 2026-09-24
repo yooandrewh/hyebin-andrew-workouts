@@ -731,9 +731,13 @@ function workingWeightOf(sets, allowZero){
   // resolves to the mode and is unaffected.
   return bc>1 ? best : ws[0];
 }
+// how many warm-up sets the goal calls for (its top number); no goal -> the old default of 2
+const WARM_RAMP={1:[0.6],2:[0.5,0.7],3:[0.4,0.6,0.8]};
 function warmupsFor(ex, w, reps){
   if(!w || w<50) return [];
-  return [ {w:snapW(ex,w*0.5), r:reps}, {w:snapW(ex,w*0.7), r:reps} ];
+  const g=(ex&&ex.goal)||{};
+  const n = g.warm!=null ? Math.max(0,Math.min(3,Math.round(g.warm))) : 2;
+  return (WARM_RAMP[n]||[]).map(f=>({w:snapW(ex,w*f), r:reps}));
 }
 // returns {working:[{w,r,rpe}], warmups:[{w,r}], note}
 function recommend(pid, exId){
@@ -2553,6 +2557,7 @@ function goalText(g){
   if(reps) parts.push("× "+reps+" reps");
   let s=parts.join(" ");
   if(g.rpe) s += (s?" @ ":"")+"RPE "+g.rpe;
+  if(g.warm!=null) s += (s?" · ":"")+(g.warm?g.warm+" warm-up"+(g.warm>1?"s":""):"no warm-up");
   return s;
 }
 function guideBanner(ex){
@@ -2594,6 +2599,7 @@ function editGuide(exId){
     <div class="gline"><span class="lbl">Sets</span>${stepper("gsets",g.sets,0,99,1)}</div>
     <div class="gline"><span class="lbl">Reps</span>${stepper("grmin",g.repsLow,0,99,1)}<span class="rangeto">to</span>${stepper("grmax",g.repsHigh,0,99,1)}</div>
     <div class="gline"><span class="lbl">Target RPE</span>${stepper("grpe",g.rpe,1,10,0.5)}</div>
+    <div class="gline"><span class="lbl">Warm-up sets</span>${stepper("gwarm",g.warm,0,3,1)}</div>
     <div class="field" style="margin-top:14px"><label>Load</label>
       <div class="opts" id="assistOpts">
         <button class="opt ${isAssisted(ex)?"":"on"}" onclick="pick(this,'assistOpts')" data-v="Standard">Standard</button>
@@ -2612,8 +2618,8 @@ function saveGuide(exId, clear){
   if(clear){ ex.goal=null; ex.guide=""; save(); closeModal(); render(); return; }
   const gv=id=>{ const el=document.getElementById(id); if(!el||el.value==="") return null; const v=parseFloat(el.value); return isNaN(v)?null:v; };
   const notes=(document.getElementById("gnotes").value||"").trim();
-  const goal={ sets:gv("gsets"), repsLow:gv("grmin"), repsHigh:gv("grmax"), rpe:gv("grpe"), notes };
-  const empty = goal.sets==null && goal.repsLow==null && goal.repsHigh==null && goal.rpe==null && !notes;
+  const goal={ sets:gv("gsets"), repsLow:gv("grmin"), repsHigh:gv("grmax"), rpe:gv("grpe"), warm:gv("gwarm"), notes };
+  const empty = goal.sets==null && goal.repsLow==null && goal.repsHigh==null && goal.rpe==null && goal.warm==null && !notes;
   ex.goal = empty ? null : goal;
   ex.guide = "";
   save(); closeModal(); render();
@@ -3550,6 +3556,12 @@ const PROGRAM=[
   ["Leg Extension","Machine","None",2,10,12,8],["Seated Leg Curl","Machine","None",2,10,12,8],
   ["Standing Calf Raise","Machine","None",3,12,15,8],["Roman Chair Leg Raise","Bodyweight","None",3,10,20,8]]}
 ];
+// warm-up sets per lift: the top of each range in the program (2-3 -> 3, 0-1 -> 1)
+const PROGRAM_WARM={"Bench Press":3,"Barbell Row":3,"DB Lateral Raise":1,"Pull-Up":2,"Pec Deck":1,"Preacher Curl":1,
+ "EZ-Bar Skullcrusher":1,"Deadlift":3,"Leg Press":3,"Glute Ham Raise":2,"Seated Calf Raise":1,"Cable Crunch":1,
+ "Lat Pulldown":2,"Overhead Barbell Press":3,"Dumbbell Row":2,"Flat Dumbbell Press":2,"Reverse Pec Deck":1,
+ "Triceps Pressdown":1,"Bayesian Cable Curl":1,"Barbell Back Squat":3,"45° Back Extension":2,"Leg Extension":2,
+ "Seated Leg Curl":2,"Standing Calf Raise":1,"Roman Chair Leg Raise":1};
 function seedProgram(){
   if(S.programSeeded) return false;
   PROGRAM.forEach(p=>{
@@ -3558,7 +3570,7 @@ function seedProgram(){
     p.ex.forEach(([name,eq,ang,sets,lo,hi,rpe,grp])=>{
       let ex=findExercise(name,eq,ang);
       if(!ex){ ex={id:"prog-"+exKey(name).slice(0,40),name,equipment:eq,angle:ang,goal:null,assisted:false}; S.exercises.push(ex); }
-      ex.goal={sets,repsLow:lo,repsHigh:hi,rpe,notes:(ex.goal&&ex.goal.notes)||""};
+      ex.goal={sets,repsLow:lo,repsHigh:hi,rpe,warm:PROGRAM_WARM[name],notes:(ex.goal&&ex.goal.notes)||""};
       w.exerciseIds.push(ex.id);
       if(grp) w.ss[ex.id]="prog-ss-"+p.id;
     });
